@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Bot Dashboard</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <div id="app">
+    <div id="login-view" class="card">
+      <h1>Admin Login</h1>
+      <div class="form-row">
+        <label>Username</label>
+        <input id="username" type="text" placeholder="admin" />
+      </div>
+      <div class="form-row">
+        <label>Password</label>
+        <input id="password" type="password" placeholder="••••••" />
+      </div>
+      <button id="login-btn" class="btn primary">Login</button>
+      <div id="login-error" class="error"></div>
+    </div>
+
+    <div id="dashboard" class="hidden">
+      <header class="topbar">
+        <h2>EA Control Station</h2>
+        <div class="spacer"></div>
+        <select id="risk-mode" class="select">
+          <option>Conservative</option>
+          <option>Balanced</option>
+          <option>Aggressive</option>
+        </select>
+        <button id="logout-btn" class="btn">Logout</button>
+      </header>
+
+      <section class="grid">
+        <div class="card">
+          <h3>Account Stats</h3>
+          <div class="stats">
+            <div><span class="label">Balance</span><span id="balance">$0</span></div>
+            <div><span class="label">Equity</span><span id="equity">$0</span></div>
+            <div><span class="label">Win Rate</span><span id="win-rate">0%</span></div>
+          </div>
+          <div class="actions">
+            <button id="export-pdf" class="btn">Export PDF</button>
+            <button id="export-xls" class="btn">Export XLS</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>AI Insights</h3>
+          <ul id="ai-insights" class="list"></ul>
+        </div>
+
+        <div class="card">
+          <h3>Live Trades</h3>
+          <div class="table-wrap">
+            <table class="table" id="live-trades">
+              <thead><tr><th>Pair</th><th>Lots</th><th>Direction</th><th>AI Confidence</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Performance by Pair</h3>
+          <div class="form-row">
+            <label>Select Pair</label>
+            <select id="perf-pair-select" class="select">
+              <option value="">-- All Pairs --</option>
+            </select>
+          </div>
+          <div class="chart-container">
+            <canvas id="perf-chart"></canvas>
+          </div>
+          <div class="table-wrap">
+            <table class="table" id="perf">
+              <thead><tr><th>Pair</th><th>Win Rate</th><th>Drawdown</th><th>Trades</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card license-control-card">
+          <h3>Licensing Control</h3>
+          
+          <div class="form-row">
+            <label>Select Action</label>
+            <select id="license-action" class="select">
+              <option value="">-- Choose Action --</option>
+              <option value="activate">Activate License</option>
+              <option value="deactivate">Deactivate License</option>
+              <option value="renew">Renew License</option>
+              <option value="status">Check Status</option>
+            </select>
+          </div>
+
+          <div id="license-form-container" class="hidden">
+            <div class="form-row field-license-key">
+              <label>License Key</label>
+              <input id="license-key" type="text" placeholder="Enter License Key" />
+            </div>
+            <div class="form-row field-license-name hidden">
+              <label>Name</label>
+              <input id="license-name" type="text" placeholder="Enter Name" />
+            </div>
+            <div class="form-row field-license-days hidden">
+              <label>Number of Days</label>
+              <input id="license-days" type="number" min="1" value="30" placeholder="30" />
+            </div>
+            <button id="btn-license-submit" class="btn primary">Submit</button>
+          </div>
+
+          <div id="license-result" class="license-result hidden"></div>
+        </div>
+
+        <div class="card">
+          <h3>All Licenses</h3>
+          <div class="table-wrap">
+            <table class="table" id="licenses-table">
+              <thead><tr><th>Name</th><th>License Key</th><th>Expiry Date</th><th>Status</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
