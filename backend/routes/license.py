@@ -7,6 +7,28 @@ from models.license import get_license_status, activate_license, deactivate_lice
 license_bp = Blueprint('license', __name__)
 
 
+# Public endpoint for EAs to check license key validity
+@license_bp.get('/license/check')
+@license_bp.get('/license/check')
+async def license_check():
+    key = request.args.get('key')
+    if not key:
+        return jsonify({"error": "key is required"}), 400
+
+    async with get_db() as db:
+        res = await get_license_status(db, key)
+
+    if not res:
+        return jsonify({"error": "License key not found"}), 404
+
+    return jsonify({
+        "key": res.get("key"),
+        "status": res.get("status"),
+        "expires_at": res.get("expires_at"),
+        "name": res.get("name", "Unknown")
+    })
+
+
 @license_bp.get('/license/status')
 @auth_required
 async def license_status(user):
