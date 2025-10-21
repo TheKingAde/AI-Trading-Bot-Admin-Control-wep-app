@@ -1,4 +1,4 @@
-const state = { token: null, perfData: null, perfChart: null };
+const state = { token: null, perfData: null, perfChart: null, selectedLicenseKey: null };
 
 function $(sel) { return document.querySelector(sel); }
 function $$(sel) { return document.querySelectorAll(sel); }
@@ -47,12 +47,56 @@ function logout() {
 async function loadDashboard() {
   hide('#login-view');
   show('#dashboard');
-  await Promise.all([refreshLive(), refreshPerf(), refreshAI(), refreshAccount(), fetchAllLicenses()]);
+  await fetchAllLicenses();
+  await populateAccountSelector();
+}
+
+async function populateAccountSelector() {
+  try {
+    const licenses = await api('/license/all');
+    const selector = $('#account-selector');
+    selector.innerHTML = '<option value="">-- Select Account --</option>';
+    
+    // Only show active licenses
+    const activeLicenses = licenses.filter(lic => lic.status === 'active');
+    activeLicenses.forEach(lic => {
+      const opt = document.createElement('option');
+      opt.value = lic.key;
+      opt.textContent = `${lic.name} (${lic.key.substring(0, 8)}...)`;
+      selector.appendChild(opt);
+    });
+    
+    // Auto-select first active license if available
+    if (activeLicenses.length > 0) {
+      selector.value = activeLicenses[0].key;
+      state.selectedLicenseKey = activeLicenses[0].key;
+      await refreshAllData();
+    }
+  } catch (e) {
+    console.error('Failed to populate account selector:', e);
+  }
+}
+
+async function onAccountChange() {
+  const selector = $('#account-selector');
+  state.selectedLicenseKey = selector.value;
+  if (state.selectedLicenseKey) {
+    await refreshAllData();
+  }
+}
+
+async function refreshAllData() {
+  if (!state.selectedLicenseKey) return;
+  await Promise.all([refreshLive(), refreshPerf(), refreshAI(), refreshAccount()]);
 }
 
 async function refreshLive() {
   try {
-    const data = await api('/trade_data/live');
+    if (!state.selectedLicenseKey) {
+      $('#live-trades tbody').innerHTML = '<tr><td colspan="4" style="text-align: center;">Please select an account</td></tr>';
+      return;
+    }
+    const data = await api(`/trade_data/live?license_key=${encodeURIComponent(state.selectedLicenseKey)}`);
     const tbody = $('#live-trades tbody');
     tbody.innerHTML = '';
     data.trades.forEach(t => {
@@ -60,12 +104,16 @@ async function refreshLive() {
       tr.innerHTML = `<td>${t.pair}</td><td>${t.lots}</td><td>${t.direction}</td><td>${Math.round(t.ai_confidence*100)}%</td>`;
       tbody.appendChild(tr);
     });
-  } catch (e) { /* ignore */ }
+  } catch (e) { console.error('Failed to load live trades:', e); }
 }
 
 async function refreshPerf() {
   try {
-    const data = await api('/performance');
+    if (!state.selectedLicenseKey) {
+      $('#perf tbody').innerHTML = '<tr><td colspan="4" style="text-align: center;">Please select an account</td></tr>';
+      return;
+    }
+    const data = await api(`/performance?license_key=${encodeURIComponent(state.selectedLicenseKey)}`);
     state.perfData = data.performance; // Store for chart updates
     
     // Populate pair selector
@@ -178,19 +226,39 @@ function onPerfPairChange() {
 }
 
 async function refreshAI() {
-  const insights = [
-    'unavailable'
-  ];
-  const ul = $('#ai-insights');
-  ul.innerHTML = '';
-  insights.forEach(i => { const li = document.createElement('li'); li.textContent = i; ul.appendChild(li); });
+  try {
+    if (!state.selectedLicenseKey) {
+      $('#ai-insights').innerHTML = '<li>Please select an account</li>';
+      return;
+    }
+    const data = await api(`/ai_insights?license_key=${encodeURIComponent(state.selectedLicenseKey)}`);
+    const ul = $('#ai-insights');
+    ul.innerHTML = '';
+    data.insights.forEach(i => { 
+      const li = document.createElement('li'); 
+      li.textContent = i; 
+      ul.appendChild(li); 
+    });
+  } catch (e) { 
+    console.error('Failed to load AI insights:', e);
+  }
 }
 
 async function refreshAccount() {
-  // No direct endpoint; approximate by reading performance and live to display dummy values
-  $('#balance').textContent = '$0';
-  $('#equity').textContent = '$0';
-  $('#win-rate').textContent = '0%';
+  try {
+    if (!state.selectedLicenseKey) {
+      $('#balance').textContent = '$0';
+      $('#equity').textContent = '$0';
+      $('#win-rate').textContent = '0%';
+      return;
+    }
+    const data = await api(`/account_stats?license_key=${encodeURIComponent(state.selectedLicenseKey)}`);
+    $('#balance').textContent = `$${parseFloat(data.balance).toFixed(2)}`;
+    $('#equity').textContent = `$${parseFloat(data.equity).toFixed(2)}`;
+    $('#win-rate').textContent = `${Math.round(data.win_rate * 100)}%`;
+  } catch (e) {
+    console.error('Failed to load account stats:', e);
+  }
 }
 
 // Dynamic license form handler
@@ -344,6 +412,9 @@ window.addEventListener('DOMContentLoaded', () => {
   
   // Performance pair selector
   $('#perf-pair-select').addEventListener('change', onPerfPairChange);
+  
+  // Account selector
+  $('#account-selector').addEventListener('change', onAccountChange);
 
   // restore token
   const t = localStorage.getItem('token');

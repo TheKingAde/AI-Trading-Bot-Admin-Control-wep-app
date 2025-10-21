@@ -32,19 +32,42 @@ SCHEMA = [
     );''',
     '''CREATE TABLE IF NOT EXISTS accounts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        license_key TEXT NOT NULL,
         balance REAL DEFAULT 0,
         equity REAL DEFAULT 0,
         win_rate REAL DEFAULT 0,
-        updated_at TEXT NOT NULL
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (license_key) REFERENCES licenses(key)
     );''',
     '''CREATE TABLE IF NOT EXISTS trades (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        license_key TEXT NOT NULL,
         pair TEXT NOT NULL,
+        lots REAL DEFAULT 0,
+        direction TEXT,
         result REAL NOT NULL,
         opened_at TEXT,
         closed_at TEXT,
         ai_confidence REAL,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (license_key) REFERENCES licenses(key)
+    );''',
+    '''CREATE TABLE IF NOT EXISTS performance (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        license_key TEXT NOT NULL,
+        pair TEXT NOT NULL,
+        win_rate REAL DEFAULT 0,
+        drawdown REAL DEFAULT 0,
+        trades_count INTEGER DEFAULT 0,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (license_key) REFERENCES licenses(key)
+    );''',
+    '''CREATE TABLE IF NOT EXISTS ai_insights (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        license_key TEXT NOT NULL,
+        insight TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (license_key) REFERENCES licenses(key)
     );'''
 ]
 
