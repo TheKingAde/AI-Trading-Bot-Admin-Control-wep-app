@@ -46,7 +46,7 @@ async def post_trade_history(user):
 async def get_live_trades(user):
     # Dummy live trades with AI confidence
     dummy = [
-        {"pair": "EURUSD", "lots": 0.1, "direction": "BUY", "ai_confidence": 0.76},
-        {"pair": "GBPUSD", "lots": 0.2, "direction": "SELL", "ai_confidence": 0.63},
+        {"pair": "unavailable", "lots": 0, "direction": "unavailable", "ai_confidence": 0},
+        {"pair": "unavailable", "lots": 0, "direction": "unavailable", "ai_confidence": 0},
     ]
     return jsonify({"trades": dummy})
