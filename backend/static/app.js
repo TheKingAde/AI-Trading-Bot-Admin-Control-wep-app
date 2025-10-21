@@ -179,9 +179,7 @@ function onPerfPairChange() {
 
 async function refreshAI() {
   const insights = [
-    'EURUSD momentum strengthening near support.',
-    'GBPUSD shows divergence; consider reduced risk.',
-    'USDJPY range-bound; wait for breakout confirmation.'
+    'unavailable'
   ];
   const ul = $('#ai-insights');
   ul.innerHTML = '';
@@ -190,9 +188,9 @@ async function refreshAI() {
 
 async function refreshAccount() {
   // No direct endpoint; approximate by reading performance and live to display dummy values
-  $('#balance').textContent = '$10,000';
-  $('#equity').textContent = '$10,250';
-  $('#win-rate').textContent = '60%';
+  $('#balance').textContent = '$0';
+  $('#equity').textContent = '$0';
+  $('#win-rate').textContent = '0%';
 }
 
 // Dynamic license form handler

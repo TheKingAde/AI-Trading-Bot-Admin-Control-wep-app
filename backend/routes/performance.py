@@ -10,8 +10,8 @@ performance_bp = Blueprint('performance', __name__)
 async def get_performance(user):
     # Dummy performance per pair
     data = [
-        {"pair": "EURUSD", "win_rate": 0.58, "drawdown": 0.12, "trades": 124},
-        {"pair": "GBPUSD", "win_rate": 0.61, "drawdown": 0.09, "trades": 98},
-        {"pair": "USDJPY", "win_rate": 0.55, "drawdown": 0.15, "trades": 85},
+        {"pair": "unavailable", "win_rate": 0, "drawdown": 0, "trades": 0},
+        {"pair": "unavailable", "win_rate": 0, "drawdown": 0, "trades": 0},
+        {"pair": "unavailable", "win_rate": 0, "drawdown": 0, "trades": 0},
     ]
     return jsonify({"performance": data})
