@@ -9,7 +9,6 @@ license_bp = Blueprint('license', __name__)
 
 # Public endpoint for EAs to check license key validity
 @license_bp.get('/license/check')
-@license_bp.get('/license/check')
 async def license_check():
     key = request.args.get('key')
     if not key:
