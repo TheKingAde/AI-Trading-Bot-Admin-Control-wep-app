@@ -12,21 +12,20 @@ peak_balance = 0
 async def get_performance(user):
     """Get performance data calculated from trade history for a specific license key"""
     license_key = request.args.get('license_key')
-    global peak_balance
     
     if not license_key:
         return jsonify({"performance": []})
-    
+
     async with get_db() as db:
-        # Get account initial/current balance
+        # Get latest account balance/equity
         cursor1 = await db.execute(
             'SELECT balance, equity FROM accounts WHERE license_key = ? ORDER BY updated_at DESC LIMIT 1',
             (license_key,)
         )
         row1 = await cursor1.fetchone()
         initial_balance = row1[0] if row1 else 1000  # fallback default
-        
-        # Aggregate summary stats per pair
+
+        # Aggregate summary stats
         cursor = await db.execute('''
             SELECT 
                 pair,
@@ -60,13 +59,13 @@ async def get_performance(user):
             ''', (license_key, pair))
             
             trade_results = await trades_cursor.fetchall()
-            
-            # Initialize drawdown variables
+
+            # Initialize balance and drawdown variables
             running_balance = initial_balance
             peak_balance = initial_balance
             max_relative_drawdown = 0.0
-            current_relative_drawdown = 0.0
-            
+            current_drawdown = 0.0
+
             for trade_result in trade_results:
                 profit = trade_result[0] or 0
                 running_balance += profit
@@ -75,16 +74,17 @@ async def get_performance(user):
                 if running_balance > peak_balance:
                     peak_balance = running_balance
 
-                # Calculate current relative drawdown (%)
+                # Calculate current drawdown (%)
                 if peak_balance > 0:
-                    current_relative_drawdown = ((peak_balance - running_balance) / peak_balance) * 100
-                    if current_relative_drawdown > max_relative_drawdown:
-                        max_relative_drawdown = current_relative_drawdown
-            
+                    current_drawdown = ((peak_balance - running_balance) / peak_balance) * 100
+                    if current_drawdown > max_relative_drawdown:
+                        max_relative_drawdown = current_drawdown
+
             performance.append({
                 "pair": pair,
                 "win_rate": round(win_rate, 2),
-                "drawdown": f"{round(current_relative_drawdown, 2)}({round(max_relative_drawdown, 2)})",  # format "current(max)"
+                "max_drawdown": round(max_relative_drawdown, 2),  # highest DD %
+                "current_drawdown": round(current_drawdown, 2),   # most recent DD %
                 "trades": total_trades,
                 "total_profit": round(total_profit, 2)
             })
@@ -93,7 +93,8 @@ async def get_performance(user):
         "performance": performance if performance else [{
             "pair": "No data",
             "win_rate": 0,
-            "drawdown": "0(0)",
+            "max_drawdown": 0,
+            "current_drawdown": 0,
             "trades": 0,
             "total_profit": 0
         }]

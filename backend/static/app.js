@@ -131,7 +131,7 @@ async function refreshPerf() {
     tbody.innerHTML = '';
     data.performance.forEach(p => {
       const tr = document.createElement('tr');
-      tr.innerHTML = `<td>${p.pair}</td><td>${Math.round(p.win_rate)}%</td><td>${p.drawdown}%</td><td>${p.trades}</td>`;
+      tr.innerHTML = `<td>${p.pair}</td><td>${Math.round(p.win_rate)}%</td><td>${Math.round(p.drawdown)}% (${Math.round(p.max_drawdown)}%)</td><td>${p.trades}</td>`;
       tbody.appendChild(tr);
     });
     
