@@ -93,7 +93,7 @@ async function refreshAllData() {
 async function refreshLive() {
   try {
     if (!state.selectedLicenseKey) {
-      $('#live-trades tbody').innerHTML = '<tr><td colspan="6" style="text-align: center;">Please select an account</td></tr>';
+      $('#live-trades tbody').innerHTML = '<tr><td colspan="4" style="text-align: center;">Please select an account</td></tr>';
       return;
     }
     const data = await api(`/trade_data/live?license_key=${encodeURIComponent(state.selectedLicenseKey)}`);
@@ -101,9 +101,7 @@ async function refreshLive() {
     tbody.innerHTML = '';
     data.trades.forEach(t => {
       const tr = document.createElement('tr');
-      const profitValue = typeof t.profit === 'number' ? t.profit.toFixed(2) : '0.00';
-      const statusClass = t.status === 'open' ? 'status-active' : '';
-      tr.innerHTML = `<td>${t.pair}</td><td>${t.lots}</td><td>${t.direction}</td><td>$${profitValue}</td><td><span class="${statusClass}">${t.status}</span></td><td>${t.ai_confidence}</td>`;
+      tr.innerHTML = `<td>${t.pair}</td><td>${t.lots}</td><td>${t.direction}</td><td>${Math.round(t.ai_confidence*100)}%</td>`;
       tbody.appendChild(tr);
     });
   } catch (e) { console.error('Failed to load live trades:', e); }
@@ -156,7 +154,7 @@ function renderPerfChart(perfData) {
   // Prepare data
   const labels = perfData.map(p => p.pair);
   const winRates = perfData.map(p => p.win_rate);
-  const drawdowns = perfData.map(p => p.drawdown);
+  const drawdowns = perfData.map(p => p.current_drawdown);
   const trades = perfData.map(p => p.trades);
   
   // Create chart

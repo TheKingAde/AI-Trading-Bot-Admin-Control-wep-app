@@ -50,6 +50,7 @@ async def post_trade_history():
             return jsonify({"error": "Invalid license key"}), 404
         
         inserted_count = 0
+        updated_count = 0
 
         for t in trades:
             symbol = t.get('symbol', 'UNKNOWN')
@@ -58,51 +59,100 @@ async def post_trade_history():
             profit = float(t.get('profit', 0))
             time_open = t.get('time_open')
             time_close = t.get('time_close')
+            status = t.get('status', 'closed')  # 'open' or 'closed'
 
-            # --- Avoid duplicates based on unique combination ---
-            cursor = await db.execute("""
-                SELECT 1 FROM trades 
-                WHERE license_key = ? AND pair = ? AND lots = ? AND direction = ? 
-                      AND result = ? AND opened_at = ? AND closed_at = ?
-            """, (license_key, symbol, lots, direction, profit, time_open, time_close))
-            
-            exists = await cursor.fetchone()
-            if exists:
-                continue  # Skip duplicate
-
-            # Insert new trade
-            await db.execute('''
-                INSERT INTO trades (license_key, pair, lots, direction, result, opened_at, closed_at, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                license_key,
-                symbol,
-                lots,
-                direction,
-                profit,
-                time_open,
-                time_close,
-                datetime.utcnow().isoformat()
-            ))
-            inserted_count += 1
+            # For open trades, check if trade already exists (by license_key, symbol, lots, direction, opened_at)
+            # If exists, update it; otherwise insert
+            if status == 'open':
+                cursor = await db.execute("""
+                    SELECT id FROM trades 
+                    WHERE license_key = ? AND pair = ? AND lots = ? AND direction = ? AND opened_at = ? AND status = 'open'
+                """, (license_key, symbol, lots, direction, time_open))
+                
+                existing = await cursor.fetchone()
+                if existing:
+                    # Update existing open trade
+                    await db.execute("""
+                        UPDATE trades SET result = ?, closed_at = ?, status = ?
+                        WHERE id = ?
+                    """, (profit, time_close, status, existing[0]))
+                    updated_count += 1
+                else:
+                    # Insert new open trade
+                    await db.execute('''
+                        INSERT INTO trades (license_key, pair, lots, direction, result, opened_at, closed_at, status, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (
+                        license_key,
+                        symbol,
+                        lots,
+                        direction,
+                        profit,
+                        time_open,
+                        time_close,
+                        status,
+                        datetime.utcnow().isoformat()
+                    ))
+                    inserted_count += 1
+            else:
+                # For closed trades, check if there's an open trade to update
+                cursor = await db.execute("""
+                    SELECT id FROM trades 
+                    WHERE license_key = ? AND pair = ? AND lots = ? AND direction = ? AND opened_at = ? AND status = 'open'
+                """, (license_key, symbol, lots, direction, time_open))
+                
+                existing = await cursor.fetchone()
+                if existing:
+                    # Update the open trade to closed
+                    await db.execute("""
+                        UPDATE trades SET result = ?, closed_at = ?, status = 'closed'
+                        WHERE id = ?
+                    """, (profit, time_close, existing[0]))
+                    updated_count += 1
+                else:
+                    # Check for duplicate closed trade
+                    cursor = await db.execute("""
+                        SELECT 1 FROM trades 
+                        WHERE license_key = ? AND pair = ? AND lots = ? AND direction = ? 
+                              AND result = ? AND opened_at = ? AND closed_at = ? AND status = 'closed'
+                    """, (license_key, symbol, lots, direction, profit, time_open, time_close))
+                    
+                    exists = await cursor.fetchone()
+                    if not exists:
+                        # Insert new closed trade
+                        await db.execute('''
+                            INSERT INTO trades (license_key, pair, lots, direction, result, opened_at, closed_at, status, created_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ''', (
+                            license_key,
+                            symbol,
+                            lots,
+                            direction,
+                            profit,
+                            time_open,
+                            time_close,
+                            'closed',
+                            datetime.utcnow().isoformat()
+                        ))
+                        inserted_count += 1
 
         await db.commit()
     
-    return jsonify({"status": "trades stored", "inserted": inserted_count, "skipped": len(trades) - inserted_count})
+    return jsonify({"status": "trades stored", "inserted": inserted_count, "updated": updated_count})
 
 @account_bp.get('/trade_data/live')
 @auth_required
 async def get_live_trades(user):
-    """Get live trades for a specific license key"""
+    """Get trade history for a specific license key"""
     license_key = request.args.get('license_key')
     
     if not license_key:
         return jsonify({"trades": []})
     
     async with get_db() as db:
-        # Get recent trades (last 10, still open or recently closed)
+        # Get recent trades from trade history (last 10)
         cursor = await db.execute(
-            'SELECT pair, lots, direction, ai_confidence FROM trades WHERE license_key = ? AND closed_at IS NULL ORDER BY created_at DESC LIMIT 10',
+           'SELECT pair, lots, direction, result, status, ai_confidence FROM trades WHERE license_key = ? ORDER BY created_at DESC LIMIT 10',
             (license_key,)
         )
         rows = await cursor.fetchall()
@@ -112,10 +162,12 @@ async def get_live_trades(user):
                 "pair": row[0],
                 "lots": row[1],
                 "direction": row[2],
-                "ai_confidence": row[3] or 0
+                "profit": row[3],
+                "status": row[4],
+               "ai_confidence": f"{int(row[5] * 100)}%" if row[5] is not None else "Unavailable"
             })
     
-    return jsonify({"trades": trades if trades else [{"pair": "No active trades", "lots": 0, "direction": "-", "ai_confidence": 0}]})
+        return jsonify({"trades": trades if trades else [{"pair": "No trades", "lots": 0, "direction": "-", "profit": 0, "status": "-", "ai_confidence": "Unavailable"}]})
 
 
 @account_bp.get('/account_stats')

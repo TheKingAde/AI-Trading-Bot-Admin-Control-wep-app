@@ -47,6 +47,8 @@ SCHEMA = [
         result REAL NOT NULL,
         opened_at TEXT,
         closed_at TEXT,
+        status TEXT DEFAULT 'closed',
+        ai_confidence REAL DEFAULT NULL,
         created_at TEXT NOT NULL,
         FOREIGN KEY (license_key) REFERENCES licenses(key)
     );''',
