@@ -249,13 +249,11 @@ async function refreshAccount() {
     if (!state.selectedLicenseKey) {
       $('#balance').textContent = '$0';
       $('#equity').textContent = '$0';
-      $('#win-rate').textContent = '0%';
       return;
     }
     const data = await api(`/account_stats?license_key=${encodeURIComponent(state.selectedLicenseKey)}`);
     $('#balance').textContent = `$${parseFloat(data.balance).toFixed(2)}`;
     $('#equity').textContent = `$${parseFloat(data.equity).toFixed(2)}`;
-    $('#win-rate').textContent = `${Math.round(data.win_rate * 100)}%`;
   } catch (e) {
     console.error('Failed to load account stats:', e);
   }
