@@ -49,21 +49,46 @@ async def post_trade_history():
         if not lic:
             return jsonify({"error": "Invalid license key"}), 404
         
-        for t in trades:
-            await db.execute('INSERT INTO trades (license_key, pair, lots, direction, result, opened_at, closed_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                             (
-                                 license_key,
-                                 t.get('symbol', 'UNKNOWN'),
-                                 float(t.get('lots', 0)),
-                                 t.get('type', 'UNKNOWN'),
-                                 float(t.get('profit', 0)),
-                                 t.get('time_open'),
-                                 t.get('time_close'),
-                                 datetime.utcnow().isoformat()
-                             ))
-        await db.commit()
-    return jsonify({"status": "trades stored", "count": len(trades)})
+        inserted_count = 0
 
+        for t in trades:
+            symbol = t.get('symbol', 'UNKNOWN')
+            lots = float(t.get('lots', 0))
+            direction = t.get('type', 'UNKNOWN')
+            profit = float(t.get('profit', 0))
+            time_open = t.get('time_open')
+            time_close = t.get('time_close')
+
+            # --- Avoid duplicates based on unique combination ---
+            cursor = await db.execute("""
+                SELECT 1 FROM trades 
+                WHERE license_key = ? AND pair = ? AND lots = ? AND direction = ? 
+                      AND result = ? AND opened_at = ? AND closed_at = ?
+            """, (license_key, symbol, lots, direction, profit, time_open, time_close))
+            
+            exists = await cursor.fetchone()
+            if exists:
+                continue  # Skip duplicate
+
+            # Insert new trade
+            await db.execute('''
+                INSERT INTO trades (license_key, pair, lots, direction, result, opened_at, closed_at, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                license_key,
+                symbol,
+                lots,
+                direction,
+                profit,
+                time_open,
+                time_close,
+                datetime.utcnow().isoformat()
+            ))
+            inserted_count += 1
+
+        await db.commit()
+    
+    return jsonify({"status": "trades stored", "inserted": inserted_count, "skipped": len(trades) - inserted_count})
 
 @account_bp.get('/trade_data/live')
 @auth_required
