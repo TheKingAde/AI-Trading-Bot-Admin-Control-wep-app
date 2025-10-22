@@ -100,7 +100,7 @@ async def get_account_stats(user):
     license_key = request.args.get('license_key')
     
     if not license_key:
-        return jsonify({"balance": 0, "equity": 0, "win_rate": 0})
+        return jsonify({"balance": 0, "equity": 0})
     
     async with get_db() as db:
         # Get most recent account data

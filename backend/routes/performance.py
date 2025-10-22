@@ -10,64 +10,77 @@ performance_bp = Blueprint('performance', __name__)
 @performance_bp.get('/performance')
 @auth_required
 async def get_performance(user):
-    """Get performance data for a specific license key"""
+    """Get performance data calculated from trade history for a specific license key"""
     license_key = request.args.get('license_key')
     
     if not license_key:
         return jsonify({"performance": []})
     
     async with get_db() as db:
-        # Get performance data
-        cursor = await db.execute(
-            'SELECT pair, win_rate, drawdown, trades_count FROM performance WHERE license_key = ? ORDER BY pair',
-            (license_key,)
-        )
+        # Calculate performance metrics per symbol from trades table
+        cursor = await db.execute('''
+            SELECT 
+                pair,
+                COUNT(*) as total_trades,
+                SUM(CASE WHEN result > 0 THEN 1 ELSE 0 END) as winning_trades,
+                SUM(result) as total_profit
+            FROM trades 
+            WHERE license_key = ? AND closed_at IS NOT NULL
+            GROUP BY pair
+            ORDER BY pair
+        ''', (license_key,))
+        
         rows = await cursor.fetchall()
         performance = []
+        
         for row in rows:
+            pair = row[0]
+            total_trades = row[1]
+            winning_trades = row[2]
+            total_profit = row[3] or 0
+            
+            # Calculate win rate
+            win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
+            
+            # Calculate proper drawdown (max peak-to-trough decline)
+            # Get all trades for this pair ordered by close time
+            trades_cursor = await db.execute('''
+                SELECT result 
+                FROM trades 
+                WHERE license_key = ? AND pair = ? AND closed_at IS NOT NULL
+                ORDER BY closed_at ASC
+            ''', (license_key, pair))
+            
+            trade_results = await trades_cursor.fetchall()
+            
+            # Calculate running balance and drawdown
+            running_balance = 0
+            peak_balance = 0
+            max_drawdown = 0
+            
+            for trade_result in trade_results:
+                profit = trade_result[0] or 0
+                running_balance += profit
+                
+                # Update peak
+                if running_balance > peak_balance:
+                    peak_balance = running_balance
+                
+                # Calculate current drawdown
+                current_drawdown = peak_balance - running_balance
+                
+                # Update max drawdown
+                if current_drawdown > max_drawdown:
+                    max_drawdown = current_drawdown
+            
+            drawdown = max_drawdown
+            
             performance.append({
-                "pair": row[0],
-                "win_rate": row[1],
-                "drawdown": row[2],
-                "trades": row[3]
+                "pair": pair,
+                "win_rate": round(win_rate, 2),
+                "drawdown": round(drawdown, 2),
+                "trades": total_trades,
+                "total_profit": round(total_profit, 2)
             })
     
-    return jsonify({"performance": performance if performance else [{"pair": "No data", "win_rate": 0, "drawdown": 0, "trades": 0}]})
-
-
-@performance_bp.post('/performance')
-async def post_performance():
-    """Public endpoint for EAs to send performance data"""
-    data = await request.get_json()
-    license_key = data.get('license_key')
-    performance_data = data.get('performance', [])
-    
-    if not license_key:
-        return jsonify({"error": "license_key is required"}), 400
-    
-    async with get_db() as db:
-        # Verify license exists
-        cursor = await db.execute('SELECT status FROM licenses WHERE key = ?', (license_key,))
-        lic = await cursor.fetchone()
-        if not lic:
-            return jsonify({"error": "Invalid license key"}), 404
-        
-        # Delete old performance data for this license
-        await db.execute('DELETE FROM performance WHERE license_key = ?', (license_key,))
-        
-        # Insert new performance data
-        for perf in performance_data:
-            await db.execute(
-                'INSERT INTO performance (license_key, pair, win_rate, drawdown, trades_count, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
-                (
-                    license_key,
-                    perf.get('pair', 'UNKNOWN'),
-                    float(perf.get('win_rate', 0)),
-                    float(perf.get('drawdown', 0)),
-                    int(perf.get('trades', 0)),
-                    datetime.utcnow().isoformat()
-                )
-            )
-        await db.commit()
-    
-    return jsonify({"status": "performance stored", "count": len(performance_data)})
+    return jsonify({"performance": performance if performance else [{"pair": "No data", "win_rate": 0, "drawdown": 0, "trades": 0, "total_profit": 0}]})
