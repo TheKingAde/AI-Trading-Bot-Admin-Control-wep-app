@@ -106,14 +106,14 @@ async def get_account_stats(user):
     async with get_db() as db:
         # Get most recent account data
         cursor = await db.execute(
-            'SELECT balance, equity, win_rate FROM accounts WHERE license_key = ? ORDER BY updated_at DESC LIMIT 1',
+            'SELECT balance, equity FROM accounts WHERE license_key = ? ORDER BY updated_at DESC LIMIT 1',
             (license_key,)
         )
         row = await cursor.fetchone()
         if row:
-            return jsonify({"balance": row[0], "equity": row[1], "win_rate": row[2]})
+            return jsonify({"balance": row[0], "equity": row[1]})
     
-    return jsonify({"balance": 0, "equity": 0, "win_rate": 0})
+    return jsonify({"balance": 0, "equity": 0})
 
 
 @account_bp.post('/ai_insights')
