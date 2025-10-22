@@ -6,7 +6,6 @@ from models.db import get_db
 
 performance_bp = Blueprint('performance', __name__)
 
-
 @performance_bp.get('/performance')
 @auth_required
 async def get_performance(user):
@@ -17,7 +16,7 @@ async def get_performance(user):
         return jsonify({"performance": []})
     
     async with get_db() as db:
-        # Calculate performance metrics per symbol from trades table
+        # Aggregate summary stats
         cursor = await db.execute('''
             SELECT 
                 pair,
@@ -42,8 +41,7 @@ async def get_performance(user):
             # Calculate win rate
             win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
             
-            # Calculate proper drawdown (max peak-to-trough decline)
-            # Get all trades for this pair ordered by close time
+            # Get all trade results for drawdown calculation
             trades_cursor = await db.execute('''
                 SELECT result 
                 FROM trades 
@@ -53,34 +51,39 @@ async def get_performance(user):
             
             trade_results = await trades_cursor.fetchall()
             
-            # Calculate running balance and drawdown
+            # Calculate running balance & relative drawdown
             running_balance = 0
             peak_balance = 0
-            max_drawdown = 0
+            max_relative_drawdown = 0.0
             
             for trade_result in trade_results:
                 profit = trade_result[0] or 0
                 running_balance += profit
-                
-                # Update peak
+
+                # Update peak balance
                 if running_balance > peak_balance:
                     peak_balance = running_balance
-                
-                # Calculate current drawdown
-                current_drawdown = peak_balance - running_balance
-                
-                # Update max drawdown
-                if current_drawdown > max_drawdown:
-                    max_drawdown = current_drawdown
-            
-            drawdown = max_drawdown
+
+                # Calculate relative drawdown (%)
+                if peak_balance > 0:
+                    relative_dd = ((peak_balance - running_balance) / peak_balance) * 100
+                    if relative_dd > max_relative_drawdown:
+                        max_relative_drawdown = relative_dd
             
             performance.append({
                 "pair": pair,
                 "win_rate": round(win_rate, 2),
-                "drawdown": round(drawdown, 2),
+                "drawdown": round(max_relative_drawdown, 2),  # relative DD in %
                 "trades": total_trades,
                 "total_profit": round(total_profit, 2)
             })
     
-    return jsonify({"performance": performance if performance else [{"pair": "No data", "win_rate": 0, "drawdown": 0, "trades": 0, "total_profit": 0}]})
+    return jsonify({
+        "performance": performance if performance else [{
+            "pair": "No data",
+            "win_rate": 0,
+            "drawdown": 0,
+            "trades": 0,
+            "total_profit": 0
+        }]
+    })
