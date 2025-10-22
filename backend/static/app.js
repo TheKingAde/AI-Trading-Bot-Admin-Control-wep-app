@@ -156,7 +156,7 @@ function renderPerfChart(perfData) {
   // Prepare data
   const labels = perfData.map(p => p.pair);
   const winRates = perfData.map(p => p.win_rate);
-  const drawdowns = perfData.map(p => p.drawdown);
+  const drawdowns = perfData.map(p => p.current_drawdown);
   const trades = perfData.map(p => p.trades);
   
   // Create chart
