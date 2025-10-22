@@ -14,7 +14,6 @@ async def post_account_data():
     license_key = data.get('license_key')
     balance = float(data.get('balance', 0))
     equity = float(data.get('equity', 0))
-    win_rate = float(data.get('win_rate', 0))
     
     if not license_key:
         return jsonify({"error": "license_key is required"}), 400
@@ -27,8 +26,8 @@ async def post_account_data():
             return jsonify({"error": "Invalid license key"}), 404
         
         # Insert account data
-        await db.execute('INSERT INTO accounts (license_key, balance, equity, win_rate, updated_at) VALUES (?, ?, ?, ?, ?)',
-                         (license_key, balance, equity, win_rate, datetime.utcnow().isoformat()))
+        await db.execute('INSERT INTO accounts (license_key, balance, equity, updated_at) VALUES (?, ?, ?, ?)',
+                         (license_key, balance, equity, datetime.utcnow().isoformat()))
         await db.commit()
     return jsonify({"status": "stored"})
 

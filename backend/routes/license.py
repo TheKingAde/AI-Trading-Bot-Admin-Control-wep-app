@@ -31,7 +31,7 @@ async def license_check():
         # Remove seconds and milliseconds
         match = re.match(r"(\d{4}\.\d{2}\.\d{2} \d{2}:\d{2})", expires_at)
         if match:
-            expires_at = match.group(1)
+            expires_at = match.group(1) + ":00"
         else:
             # fallback: take up to first 16 chars
             expires_at = expires_at[:16]

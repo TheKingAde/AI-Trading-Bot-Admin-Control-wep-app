@@ -35,7 +35,6 @@ SCHEMA = [
         license_key TEXT NOT NULL,
         balance REAL DEFAULT 0,
         equity REAL DEFAULT 0,
-        win_rate REAL DEFAULT 0,
         updated_at TEXT NOT NULL,
         FOREIGN KEY (license_key) REFERENCES licenses(key)
     );''',
