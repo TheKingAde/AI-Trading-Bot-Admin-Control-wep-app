@@ -152,7 +152,7 @@ async def get_live_trades(user):
     async with get_db() as db:
         # Get recent trades from trade history (last 10)
         cursor = await db.execute(
-           'SELECT pair, lots, direction, result, status, ai_confidence FROM trades WHERE license_key = ? ORDER BY created_at DESC LIMIT 10',
+           'SELECT pair, lots, direction, result, status, ai_confidence FROM trades WHERE license_key = ? ORDER BY created_at DESC LIMIT 3',
             (license_key,)
         )
         rows = await cursor.fetchall()
