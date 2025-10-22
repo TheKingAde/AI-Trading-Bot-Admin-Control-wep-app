@@ -47,7 +47,6 @@ SCHEMA = [
         result REAL NOT NULL,
         opened_at TEXT,
         closed_at TEXT,
-        ai_confidence REAL,
         created_at TEXT NOT NULL,
         FOREIGN KEY (license_key) REFERENCES licenses(key)
     );''',

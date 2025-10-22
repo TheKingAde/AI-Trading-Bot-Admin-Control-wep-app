@@ -50,16 +50,15 @@ async def post_trade_history():
             return jsonify({"error": "Invalid license key"}), 404
         
         for t in trades:
-            await db.execute('INSERT INTO trades (license_key, pair, lots, direction, result, opened_at, closed_at, ai_confidence, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            await db.execute('INSERT INTO trades (license_key, pair, lots, direction, result, opened_at, closed_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
                              (
                                  license_key,
-                                 t.get('pair', 'UNKNOWN'),
+                                 t.get('symbol', 'UNKNOWN'),
                                  float(t.get('lots', 0)),
-                                 t.get('direction', 'UNKNOWN'),
-                                 float(t.get('result', 0)),
-                                 t.get('opened_at'),
-                                 t.get('closed_at'),
-                                 float(t.get('ai_confidence', 0)),
+                                 t.get('type', 'UNKNOWN'),
+                                 float(t.get('profit', 0)),
+                                 t.get('time_open'),
+                                 t.get('time_close'),
                                  datetime.utcnow().isoformat()
                              ))
         await db.commit()
