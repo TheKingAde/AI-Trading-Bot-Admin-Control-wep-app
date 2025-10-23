@@ -1,4 +1,4 @@
-const state = { token: null, perfData: null, perfChart: null, selectedLicenseKey: null };
+const state = { token: null, perfData: null, perfChart: null, equityCurveChart: null, selectedLicenseKey: null };
 
 function $(sel) { return document.querySelector(sel); }
 function $$(sel) { return document.querySelectorAll(sel); }
@@ -87,7 +87,7 @@ async function onAccountChange() {
 
 async function refreshAllData() {
   if (!state.selectedLicenseKey) return;
-  await Promise.all([refreshLive(), refreshPerf(), refreshAI(), refreshAccount()]);
+  await Promise.all([refreshLive(), refreshPerf(), refreshAI(), refreshAccount(), refreshEquityCurve()]);
 }
 
 async function refreshLive() {
@@ -259,6 +259,118 @@ async function refreshAccount() {
   } catch (e) {
     console.error('Failed to load account stats:', e);
   }
+}
+
+async function refreshEquityCurve() {
+  try {
+    if (!state.selectedLicenseKey) {
+      return;
+    }
+    const data = await api(`/equity_curve?license_key=${encodeURIComponent(state.selectedLicenseKey)}`);
+    renderEquityCurve(data);
+  } catch (e) {
+    console.error('Failed to load equity curve:', e);
+  }
+}
+
+function renderEquityCurve(data) {
+  const canvas = $('#equity-curve-chart');
+  if (!canvas) return;
+  
+  const ctx = canvas.getContext('2d');
+  
+  // Destroy existing chart if any
+  if (state.equityCurveChart) {
+    state.equityCurveChart.destroy();
+  }
+  
+  // If no data, show empty chart
+  if (!data.timestamps || data.timestamps.length === 0) {
+    return;
+  }
+  
+  // Format timestamps for display (show only date if many points)
+  const labels = data.timestamps.map(ts => {
+    if (data.timestamps.length > 20) {
+      // Show only date for many points
+      return ts.split(' ')[0];
+    }
+    return ts;
+  });
+  
+  // Create chart
+  state.equityCurveChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [
+        {
+          label: 'Equity',
+          data: data.equity,
+          borderColor: 'rgba(76, 175, 80, 1)',
+          backgroundColor: 'rgba(76, 175, 80, 0.1)',
+          borderWidth: 2,
+          fill: true,
+          tension: 0.4,
+          pointRadius: data.timestamps.length > 30 ? 0 : 3,
+          pointHoverRadius: 5
+        },
+        {
+          label: 'Balance',
+          data: data.balance,
+          borderColor: 'rgba(33, 150, 243, 1)',
+          backgroundColor: 'rgba(33, 150, 243, 0.1)',
+          borderWidth: 2,
+          fill: true,
+          tension: 0.4,
+          pointRadius: data.timestamps.length > 30 ? 0 : 3,
+          pointHoverRadius: 5
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: {
+        mode: 'index',
+        intersect: false,
+      },
+      scales: {
+        y: {
+          beginAtZero: false,
+          ticks: { 
+            color: '#bdbdbd',
+            callback: function(value) {
+              return '$' + value.toFixed(2);
+            }
+          },
+          grid: { color: 'rgba(255,255,255,0.1)' }
+        },
+        x: {
+          ticks: { 
+            color: '#bdbdbd',
+            maxRotation: 45,
+            minRotation: 45,
+            autoSkip: true,
+            maxTicksLimit: 10
+          },
+          grid: { color: 'rgba(255,255,255,0.1)' }
+        }
+      },
+      plugins: {
+        legend: {
+          labels: { color: '#f2f2f2' }
+        },
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              return context.dataset.label + ': $' + context.parsed.y.toFixed(2);
+            }
+          }
+        }
+      }
+    }
+  });
 }
 
 // Dynamic license form handler

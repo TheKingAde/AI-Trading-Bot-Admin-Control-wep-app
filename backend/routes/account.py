@@ -192,6 +192,52 @@ async def get_account_stats(user):
     return jsonify({"balance": 0, "equity": 0})
 
 
+@account_bp.get('/equity_curve')
+@auth_required
+async def get_equity_curve(user):
+    """Get equity curve data for a specific license key"""
+    license_key = request.args.get('license_key')
+    
+    if not license_key:
+        return jsonify({"timestamps": [], "equity": [], "balance": []})
+    
+    async with get_db() as db:
+        # Get equity history ordered by time
+        cursor = await db.execute(
+            '''SELECT updated_at, equity, balance 
+               FROM accounts 
+               WHERE license_key = ? 
+               ORDER BY updated_at ASC 
+               LIMIT 100''',
+            (license_key,)
+        )
+        rows = await cursor.fetchall()
+        
+        if not rows:
+            return jsonify({"timestamps": [], "equity": [], "balance": []})
+        
+        timestamps = []
+        equity_values = []
+        balance_values = []
+        
+        for row in rows:
+            # Format timestamp for display
+            timestamp = row[0]
+            # Extract just the date and time (remove microseconds if present)
+            if 'T' in timestamp:
+                timestamp = timestamp.split('.')[0].replace('T', ' ')
+            
+            timestamps.append(timestamp)
+            equity_values.append(row[1])
+            balance_values.append(row[2])
+        
+        return jsonify({
+            "timestamps": timestamps,
+            "equity": equity_values,
+            "balance": balance_values
+        })
+
+
 # @account_bp.post('/ai_insights')
 # async def post_ai_insights():
 #     """Public endpoint for EAs to send AI insights"""
