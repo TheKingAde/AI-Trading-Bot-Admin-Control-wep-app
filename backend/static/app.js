@@ -399,20 +399,32 @@ function dl(url) {
   const exportUrl = `${url}${url.includes('?') ? '&' : '?'}license_key=${encodeURIComponent(state.selectedLicenseKey)}`;
   
   fetch('/api' + exportUrl, { 
-    headers: { 'Authorization': 'Bearer ' + state.token } 
+    headers: { 'Authorization': 'Bearer ' + state.token },
+    method: 'GET'
   })
-    .then(r => {
+    .then(async r => {
       if (!r.ok) {
-        return r.json().then(data => {
+        // Try to parse error message
+        const contentType = r.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          const data = await r.json();
           throw new Error(data.error || 'Export failed');
-        });
+        }
+        throw new Error(`Export failed with status ${r.status}`);
       }
       return r.blob();
     })
-    .then(b => {
+    .then(blob => {
+      // Verify blob has content
+      if (blob.size === 0) {
+        throw new Error('Received empty file from server');
+      }
+      
+      // Create download link
       const a = document.createElement('a');
-      const objectUrl = URL.createObjectURL(b);
+      const objectUrl = URL.createObjectURL(blob);
       a.href = objectUrl;
+      a.style.display = 'none';
       
       // Generate filename with license key prefix (first 8 chars)
       const keyPrefix = state.selectedLicenseKey.substring(0, 8);
@@ -420,12 +432,15 @@ function dl(url) {
       const extension = url.includes('pdf') ? 'pdf' : 'xlsx';
       a.download = `statement_${keyPrefix}_${date}.${extension}`;
       
+      // Trigger download
       document.body.appendChild(a);
       a.click();
-      document.body.removeChild(a);
       
-      // Clean up the object URL after a short delay
-      setTimeout(() => URL.revokeObjectURL(objectUrl), 100);
+      // Cleanup
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(objectUrl);
+      }, 100);
     })
     .catch(err => {
       alert('Export failed: ' + err.message);

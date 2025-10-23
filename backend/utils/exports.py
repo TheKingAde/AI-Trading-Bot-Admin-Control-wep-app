@@ -1,7 +1,7 @@
 from io import BytesIO
 from datetime import datetime, timedelta
 
-from quart import send_file
+from quart import Response
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
 from openpyxl import Workbook
@@ -72,13 +72,14 @@ async def generate_pdf_statement(account_summary: dict, trades: list):
     license_key_prefix = account_summary.get('license_key', 'unknown')[:8]
     filename = f'statement_{license_key_prefix}_{datetime.utcnow().date()}.pdf'
     
-    # Use download_name instead of deprecated attachment_filename
-    return await send_file(
-        buffer, 
-        mimetype='application/pdf',
-        as_attachment=True,
-        download_name=filename
-    )
+    # Read the buffer content
+    pdf_data = buffer.getvalue()
+    
+    # Return response with proper headers
+    response = Response(pdf_data, mimetype='application/pdf')
+    response.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+    response.headers['Content-Length'] = str(len(pdf_data))
+    return response
 
 
 async def generate_xls_statement(account_summary: dict, trades: list):
@@ -174,10 +175,11 @@ async def generate_xls_statement(account_summary: dict, trades: list):
     license_key_prefix = account_summary.get('license_key', 'unknown')[:8]
     filename = f'statement_{license_key_prefix}_{datetime.utcnow().date()}.xlsx'
     
-    # Use download_name instead of deprecated attachment_filename
-    return await send_file(
-        bio,
-        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        as_attachment=True,
-        download_name=filename
-    )
+    # Read the buffer content
+    xlsx_data = bio.getvalue()
+    
+    # Return response with proper headers
+    response = Response(xlsx_data, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    response.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+    response.headers['Content-Length'] = str(len(xlsx_data))
+    return response

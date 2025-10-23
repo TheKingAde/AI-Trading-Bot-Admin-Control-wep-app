@@ -1,9 +1,13 @@
 import os
 import asyncio
 from datetime import datetime
+import os
 
-REPO_PATH = r"C:\Users\User\OneDrive\Documents\dailycb_model_training_data\bot-dashboad-and-control-station"
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_PATH = os.path.dirname(SCRIPT_DIR)
+print("Repo Path:", REPO_PATH)
 BRANCH = "main"
+commit_message = f"fix export issue"
 
 async def run_cmd(*args):
     proc = await asyncio.create_subprocess_exec(*args)
@@ -12,14 +16,7 @@ async def run_cmd(*args):
 
 async def git_auto_push():
     os.chdir(REPO_PATH)
-    print("🔄 Pulling latest changes...")
-    ret = await run_cmd("git", "pull", "origin", BRANCH, "--no-edit")
-    if ret != 0:
-        print("⚠️ Git pull failed. Resolve conflicts manually.")
-        return
-
     await run_cmd("git", "add", ".")
-    commit_message = f"fix export issue"
     await run_cmd("git", "commit", "-m", commit_message)
     print("⬆️ Pushing changes...")
     await run_cmd("git", "push", "origin", BRANCH)
