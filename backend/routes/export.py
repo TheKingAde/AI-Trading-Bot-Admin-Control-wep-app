@@ -9,7 +9,7 @@ export_bp = Blueprint('export', __name__)
 
 
 async def _get_latest_account(db):
-    async with db.execute('SELECT balance, equity, win_rate, updated_at FROM accounts ORDER BY id DESC LIMIT 1') as cur:
+    async with db.execute('SELECT balance, equity, updated_at FROM accounts ORDER BY id DESC LIMIT 1') as cur:
         row = await cur.fetchone()
         if not row:
             return {"balance": 0, "equity": 0}
