@@ -7,7 +7,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_PATH = os.path.dirname(SCRIPT_DIR)
 print("Repo Path:", REPO_PATH)
 BRANCH = "main"
-commit_message = f"improve report"
+commit_message = f"fix drawdown calculation"
 
 async def run_cmd(*args):
     proc = await asyncio.create_subprocess_exec(*args)

@@ -46,9 +46,11 @@ async def _get_trades_last_30_days(db, license_key):
             for r in rows
         ]
 
-
-async def _calculate_performance(trades):
-    """Calculate win rate and drawdown from trades"""
+peak_balance = 0
+async def _calculate_performance(trades, initial_balance=1000):
+    """Calculate win rate and drawdown from trades using proper balance tracking"""
+    global peak_balance
+    
     if not trades:
         return {"win_rate": 0, "drawdown": 0, "total_trades": 0}
     
@@ -62,22 +64,32 @@ async def _calculate_performance(trades):
     winning_trades = sum(1 for t in closed_trades if t.get('result', 0) > 0)
     win_rate = (winning_trades / len(closed_trades)) * 100 if closed_trades else 0
     
-    # Calculate max drawdown
-    balance = 0
-    peak = 0
-    max_drawdown = 0
+    # Calculate max drawdown using proper balance tracking
+    # Sort trades chronologically (they come in DESC order from query, so reverse)
+    chronological_trades = list(reversed(closed_trades))
     
-    for trade in reversed(closed_trades):  # Process in chronological order
-        balance += trade.get('result', 0)
-        if balance > peak:
-            peak = balance
-        drawdown = ((peak - balance) / peak * 100) if peak > 0 else 0
-        if drawdown > max_drawdown:
-            max_drawdown = drawdown
+    running_balance = initial_balance
+    peak_balance = initial_balance
+    max_relative_drawdown = 0.0
+    current_drawdown = 0.0
+    
+    for trade in chronological_trades:
+        profit = trade.get('result', 0)
+        running_balance += profit
+        
+        # Update peak balance
+        if running_balance > peak_balance:
+            peak_balance = running_balance
+        
+        # Calculate current drawdown (%)
+        if peak_balance > 0:
+            current_drawdown = ((peak_balance - running_balance) / peak_balance) * 100
+            if current_drawdown > max_relative_drawdown:
+                max_relative_drawdown = current_drawdown
     
     return {
         "win_rate": win_rate,
-        "drawdown": max_drawdown,
+        "drawdown": max_relative_drawdown,
         "total_trades": len(trades)
     }
 
@@ -99,8 +111,11 @@ async def export_pdf(user):
         account = await _get_latest_account(db, license_key)
         trades = await _get_trades_last_30_days(db, license_key)
     
-    # Calculate performance metrics
-    performance = await _calculate_performance(trades)
+    # Get initial balance (current balance or fallback to 1000)
+    initial_balance = account.get('balance', 1000) if account.get('balance', 0) > 0 else 1000
+    
+    # Calculate performance metrics with initial balance
+    performance = await _calculate_performance(trades, initial_balance)
     
     # Merge account and performance data
     account_summary = {**account, **performance, "license_key": license_key}
@@ -125,8 +140,11 @@ async def export_xls(user):
         account = await _get_latest_account(db, license_key)
         trades = await _get_trades_last_30_days(db, license_key)
     
-    # Calculate performance metrics
-    performance = await _calculate_performance(trades)
+    # Get initial balance (current balance or fallback to 1000)
+    initial_balance = account.get('balance', 1000) if account.get('balance', 0) > 0 else 1000
+    
+    # Calculate performance metrics with initial balance
+    performance = await _calculate_performance(trades, initial_balance)
     
     # Merge account and performance data
     account_summary = {**account, **performance, "license_key": license_key}
