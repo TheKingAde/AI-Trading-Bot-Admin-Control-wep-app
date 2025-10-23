@@ -1,10 +1,11 @@
 from io import BytesIO
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from quart import send_file
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
 from openpyxl import Workbook
+from openpyxl.styles import Font, Alignment, PatternFill
 
 
 async def generate_pdf_statement(account_summary: dict, trades: list):
@@ -12,51 +13,154 @@ async def generate_pdf_statement(account_summary: dict, trades: list):
     c = canvas.Canvas(buffer, pagesize=letter)
     width, height = letter
 
+    # Title
     c.setFont("Helvetica-Bold", 16)
     c.drawString(72, height - 72, "Trading Statement")
-
-    c.setFont("Helvetica", 12)
-    y = height - 100
-    for k, v in account_summary.items():
-        c.drawString(72, y, f"{k}: {v}")
-        y -= 16
-
-    y -= 16
-    c.setFont("Helvetica-Bold", 12)
-    c.drawString(72, y, "Trades:")
-    y -= 16
     c.setFont("Helvetica", 10)
+    c.drawString(72, height - 90, f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC")
+
+    # Account Summary
+    c.setFont("Helvetica-Bold", 14)
+    y = height - 120
+    c.drawString(72, y, "Account Summary")
+    y -= 20
+    c.setFont("Helvetica", 12)
+    for k, v in account_summary.items():
+        if k not in ['win_rate', 'drawdown', 'total_trades']:
+            c.drawString(72, y, f"{k.replace('_', ' ').title()}: {v}")
+            y -= 16
+
+    # Performance Metrics
+    y -= 10
+    c.setFont("Helvetica-Bold", 14)
+    c.drawString(72, y, "Performance Metrics (Last 30 Days)")
+    y -= 20
+    c.setFont("Helvetica", 12)
+    c.drawString(72, y, f"Win Rate: {account_summary.get('win_rate', 0):.2f}%")
+    y -= 16
+    c.drawString(72, y, f"Max Drawdown: {account_summary.get('drawdown', 0):.2f}%")
+    y -= 16
+    c.drawString(72, y, f"Total Trades: {account_summary.get('total_trades', 0)}")
+    y -= 30
+
+    # Trades Section
+    c.setFont("Helvetica-Bold", 14)
+    c.drawString(72, y, "Recent Trades (Last 30 Days):")
+    y -= 20
+    c.setFont("Helvetica", 10)
+    
     for t in trades[:40]:  # limit to avoid overflow
-        c.drawString(72, y, f"{t.get('pair')} result: {t.get('result')} closed: {t.get('closed_at')}")
+        trade_str = f"{t.get('pair', 'N/A')} | Lots: {t.get('lots', 0):.2f} | {t.get('direction', 'N/A')} | Result: ${t.get('result', 0):.2f} | Status: {t.get('status', 'N/A')}"
+        if t.get('closed_at'):
+            trade_str += f" | Closed: {t.get('closed_at')[:10]}"
+        c.drawString(72, y, trade_str)
         y -= 12
         if y < 72:
             c.showPage()
+            c.setFont("Helvetica", 10)
             y = height - 72
 
     c.showPage()
     c.save()
     buffer.seek(0)
-    return await send_file(buffer, mimetype='application/pdf', download_name=f'statement_{datetime.utcnow().date()}.pdf')
+    
+    # Fix: Use as_attachment and attachment_filename for Quart
+    return await send_file(
+        buffer, 
+        mimetype='application/pdf',
+        as_attachment=True,
+        attachment_filename=f'statement_{datetime.utcnow().date()}.pdf'
+    )
 
 
 async def generate_xls_statement(account_summary: dict, trades: list):
     wb = Workbook()
     ws = wb.active
     ws.title = "Statement"
-
-    ws.append(["Account Summary"])
-    for k, v in account_summary.items():
-        ws.append([k, v])
-
+    
+    # Styling
+    header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+    header_font = Font(color="FFFFFF", bold=True, size=12)
+    title_font = Font(bold=True, size=14)
+    
+    # Title
+    ws.append(["Trading Statement"])
+    ws['A1'].font = Font(bold=True, size=16)
+    ws.append([f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"])
     ws.append([])
-    ws.append(["Trades"])
-    ws.append(["Pair", "Result", "Opened", "Closed", "AI Confidence"]) 
+    
+    # Account Summary Section
+    ws.append(["Account Summary"])
+    ws[f'A{ws.max_row}'].font = title_font
+    ws.append(["Metric", "Value"])
+    for cell in ['A' + str(ws.max_row), 'B' + str(ws.max_row)]:
+        ws[cell].fill = header_fill
+        ws[cell].font = header_font
+    
+    for k, v in account_summary.items():
+        if k not in ['win_rate', 'drawdown', 'total_trades']:
+            ws.append([k.replace('_', ' ').title(), v])
+    
+    ws.append([])
+    
+    # Performance Metrics Section
+    ws.append(["Performance Metrics (Last 30 Days)"])
+    ws[f'A{ws.max_row}'].font = title_font
+    ws.append(["Metric", "Value"])
+    for cell in ['A' + str(ws.max_row), 'B' + str(ws.max_row)]:
+        ws[cell].fill = header_fill
+        ws[cell].font = header_font
+    
+    ws.append(["Win Rate", f"{account_summary.get('win_rate', 0):.2f}%"])
+    ws.append(["Max Drawdown", f"{account_summary.get('drawdown', 0):.2f}%"])
+    ws.append(["Total Trades", account_summary.get('total_trades', 0)])
+    
+    ws.append([])
+    
+    # Trades Section
+    ws.append(["Trade History (Last 30 Days)"])
+    ws[f'A{ws.max_row}'].font = title_font
+    ws.append(["Pair", "Lots", "Direction", "Result", "Status", "Opened", "Closed", "AI Confidence"])
+    
+    # Style header row
+    header_row = ws.max_row
+    for col in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']:
+        cell = col + str(header_row)
+        ws[cell].fill = header_fill
+        ws[cell].font = header_font
+        ws[cell].alignment = Alignment(horizontal='center')
+    
+    # Add trade data
     for t in trades:
         ws.append([
-            t.get('pair'), t.get('result'), t.get('opened_at'), t.get('closed_at'), t.get('ai_confidence')
+            t.get('pair', 'N/A'),
+            t.get('lots', 0),
+            t.get('direction', 'N/A'),
+            t.get('result', 0),
+            t.get('status', 'N/A'),
+            t.get('opened_at', 'N/A'),
+            t.get('closed_at', 'N/A'),
+            t.get('ai_confidence', 'Unavailable')
         ])
-
+    
+    # Adjust column widths
+    ws.column_dimensions['A'].width = 15
+    ws.column_dimensions['B'].width = 10
+    ws.column_dimensions['C'].width = 12
+    ws.column_dimensions['D'].width = 12
+    ws.column_dimensions['E'].width = 10
+    ws.column_dimensions['F'].width = 20
+    ws.column_dimensions['G'].width = 20
+    ws.column_dimensions['H'].width = 15
+    
     bio = BytesIO()
     wb.save(bio)
     bio.seek(0)
-    return await send_file(bio, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', download_name=f'statement_{datetime.utcnow().date()}.xlsx')
+    
+    # Fix: Use as_attachment and attachment_filename for Quart
+    return await send_file(
+        bio,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        attachment_filename=f'statement_{datetime.utcnow().date()}.xlsx'
+    )
