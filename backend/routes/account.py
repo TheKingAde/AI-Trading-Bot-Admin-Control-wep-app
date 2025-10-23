@@ -150,7 +150,7 @@ async def get_live_trades(user):
         return jsonify({"trades": []})
     
     async with get_db() as db:
-        # Get recent trades from trade history (last 10)
+        # Get recent trades from trade history (last 3)
         cursor = await db.execute(
            'SELECT pair, lots, direction, result, status, ai_confidence FROM trades WHERE license_key = ? ORDER BY created_at DESC LIMIT 3',
             (license_key,)
@@ -192,29 +192,29 @@ async def get_account_stats(user):
     return jsonify({"balance": 0, "equity": 0})
 
 
-@account_bp.post('/ai_insights')
-async def post_ai_insights():
-    """Public endpoint for EAs to send AI insights"""
-    data = await request.get_json()
-    license_key = data.get('license_key')
-    insights = data.get('insights', [])
+# @account_bp.post('/ai_insights')
+# async def post_ai_insights():
+#     """Public endpoint for EAs to send AI insights"""
+#     data = await request.get_json()
+#     license_key = data.get('license_key')
+#     insights = data.get('insights', [])
     
-    if not license_key:
-        return jsonify({"error": "license_key is required"}), 400
+#     if not license_key:
+#         return jsonify({"error": "license_key is required"}), 400
     
-    async with get_db() as db:
-        # Verify license exists
-        cursor = await db.execute('SELECT status FROM licenses WHERE key = ?', (license_key,))
-        lic = await cursor.fetchone()
-        if not lic:
-            return jsonify({"error": "Invalid license key"}), 404
+#     async with get_db() as db:
+#         # Verify license exists
+#         cursor = await db.execute('SELECT status FROM licenses WHERE key = ?', (license_key,))
+#         lic = await cursor.fetchone()
+#         if not lic:
+#             return jsonify({"error": "Invalid license key"}), 404
         
-        for insight in insights:
-            await db.execute('INSERT INTO ai_insights (license_key, insight, created_at) VALUES (?, ?, ?)',
-                             (license_key, insight, datetime.utcnow().isoformat()))
-        await db.commit()
+#         for insight in insights:
+#             await db.execute('INSERT INTO ai_insights (license_key, insight, created_at) VALUES (?, ?, ?)',
+#                              (license_key, insight, datetime.utcnow().isoformat()))
+#         await db.commit()
     
-    return jsonify({"status": "insights stored", "count": len(insights)})
+#     return jsonify({"status": "insights stored", "count": len(insights)})
 
 
 @account_bp.get('/ai_insights')

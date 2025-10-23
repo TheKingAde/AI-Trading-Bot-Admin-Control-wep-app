@@ -12,8 +12,8 @@ async def _get_latest_account(db):
     async with db.execute('SELECT balance, equity, win_rate, updated_at FROM accounts ORDER BY id DESC LIMIT 1') as cur:
         row = await cur.fetchone()
         if not row:
-            return {"balance": 0, "equity": 0, "win_rate": 0}
-        return {"balance": row[0], "equity": row[1], "win_rate": row[2], "updated_at": row[3]}
+            return {"balance": 0, "equity": 0}
+        return {"balance": row[0], "equity": row[1]}
 
 
 async def _get_trades(db):
