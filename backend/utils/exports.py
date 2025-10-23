@@ -19,23 +19,18 @@ async def generate_pdf_statement(account_summary: dict, trades: list):
     c.setFont("Helvetica", 10)
     c.drawString(72, height - 90, f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC")
     
-    # License Information
-    y = height - 110
-    c.setFont("Helvetica-Bold", 12)
-    c.drawString(72, y, f"Account: {account_summary.get('license_name', 'Unknown')}")
-    y -= 16
-    c.setFont("Helvetica", 10)
-    c.drawString(72, y, f"License Key: {account_summary.get('license_key', 'N/A')}")
-    y -= 10
+    # License Key
+    if 'license_key' in account_summary:
+        c.drawString(72, height - 105, f"License Key: {account_summary['license_key'][:16]}...")
 
     # Account Summary
     c.setFont("Helvetica-Bold", 14)
-    y -= 20
+    y = height - 135
     c.drawString(72, y, "Account Summary")
     y -= 20
     c.setFont("Helvetica", 12)
     for k, v in account_summary.items():
-        if k not in ['win_rate', 'drawdown', 'total_trades', 'license_key', 'license_name']:
+        if k not in ['win_rate', 'drawdown', 'total_trades', 'license_key']:
             c.drawString(72, y, f"{k.replace('_', ' ').title()}: {v}")
             y -= 16
 
@@ -73,12 +68,16 @@ async def generate_pdf_statement(account_summary: dict, trades: list):
     c.save()
     buffer.seek(0)
     
-    # Fix: Use as_attachment and attachment_filename for Quart
+    # Generate filename with license key
+    license_key_prefix = account_summary.get('license_key', 'unknown')[:8]
+    filename = f'statement_{license_key_prefix}_{datetime.utcnow().date()}.pdf'
+    
+    # Use download_name instead of deprecated attachment_filename
     return await send_file(
         buffer, 
         mimetype='application/pdf',
         as_attachment=True,
-        attachment_filename=f'statement_{datetime.utcnow().date()}.pdf'
+        download_name=filename
     )
 
 
@@ -96,13 +95,11 @@ async def generate_xls_statement(account_summary: dict, trades: list):
     ws.append(["Trading Statement"])
     ws['A1'].font = Font(bold=True, size=16)
     ws.append([f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"])
-    ws.append([])
     
-    # License Information
-    ws.append(["Account Information"])
-    ws[f'A{ws.max_row}'].font = title_font
-    ws.append(["Account Name", account_summary.get('license_name', 'Unknown')])
-    ws.append(["License Key", account_summary.get('license_key', 'N/A')])
+    # License Key
+    if 'license_key' in account_summary:
+        ws.append([f"License Key: {account_summary['license_key']}"])
+    
     ws.append([])
     
     # Account Summary Section
@@ -114,7 +111,7 @@ async def generate_xls_statement(account_summary: dict, trades: list):
         ws[cell].font = header_font
     
     for k, v in account_summary.items():
-        if k not in ['win_rate', 'drawdown', 'total_trades', 'license_key', 'license_name']:
+        if k not in ['win_rate', 'drawdown', 'total_trades', 'license_key']:
             ws.append([k.replace('_', ' ').title(), v])
     
     ws.append([])
@@ -173,10 +170,14 @@ async def generate_xls_statement(account_summary: dict, trades: list):
     wb.save(bio)
     bio.seek(0)
     
-    # Fix: Use as_attachment and attachment_filename for Quart
+    # Generate filename with license key
+    license_key_prefix = account_summary.get('license_key', 'unknown')[:8]
+    filename = f'statement_{license_key_prefix}_{datetime.utcnow().date()}.xlsx'
+    
+    # Use download_name instead of deprecated attachment_filename
     return await send_file(
         bio,
         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         as_attachment=True,
-        attachment_filename=f'statement_{datetime.utcnow().date()}.xlsx'
+        download_name=filename
     )

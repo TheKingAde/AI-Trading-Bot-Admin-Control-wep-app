@@ -9,7 +9,7 @@ export_bp = Blueprint('export', __name__)
 
 
 async def _get_latest_account(db, license_key):
-    """Get the latest account data for a specific license key"""
+    """Get the latest account info for a specific license key"""
     async with db.execute(
         'SELECT balance, equity, updated_at FROM accounts WHERE license_key = ? ORDER BY id DESC LIMIT 1',
         (license_key,)
@@ -85,16 +85,16 @@ async def _calculate_performance(trades):
 @export_bp.get('/export/pdf')
 @auth_required
 async def export_pdf(user):
+    # Get license_key from query parameters
     license_key = request.args.get('license_key')
-    
     if not license_key:
-        return jsonify({"error": "license_key is required"}), 400
+        return jsonify({"error": "license_key parameter is required"}), 400
     
     async with get_db() as db:
-        # Get license name
-        async with db.execute('SELECT name FROM licenses WHERE key = ?', (license_key,)) as cur:
-            lic_row = await cur.fetchone()
-            license_name = lic_row[0] if lic_row else "Unknown"
+        # Verify the license exists
+        async with db.execute('SELECT key FROM licenses WHERE key = ?', (license_key,)) as cur:
+            if not await cur.fetchone():
+                return jsonify({"error": "Invalid license key"}), 404
         
         account = await _get_latest_account(db, license_key)
         trades = await _get_trades_last_30_days(db, license_key)
@@ -102,13 +102,8 @@ async def export_pdf(user):
     # Calculate performance metrics
     performance = await _calculate_performance(trades)
     
-    # Merge account and performance data with license info
-    account_summary = {
-        "license_key": license_key,
-        "license_name": license_name,
-        **account, 
-        **performance
-    }
+    # Merge account and performance data
+    account_summary = {**account, **performance, "license_key": license_key}
     
     return await generate_pdf_statement(account_summary, trades)
 
@@ -116,16 +111,16 @@ async def export_pdf(user):
 @export_bp.get('/export/xls')
 @auth_required
 async def export_xls(user):
+    # Get license_key from query parameters
     license_key = request.args.get('license_key')
-    
     if not license_key:
-        return jsonify({"error": "license_key is required"}), 400
+        return jsonify({"error": "license_key parameter is required"}), 400
     
     async with get_db() as db:
-        # Get license name
-        async with db.execute('SELECT name FROM licenses WHERE key = ?', (license_key,)) as cur:
-            lic_row = await cur.fetchone()
-            license_name = lic_row[0] if lic_row else "Unknown"
+        # Verify the license exists
+        async with db.execute('SELECT key FROM licenses WHERE key = ?', (license_key,)) as cur:
+            if not await cur.fetchone():
+                return jsonify({"error": "Invalid license key"}), 404
         
         account = await _get_latest_account(db, license_key)
         trades = await _get_trades_last_30_days(db, license_key)
@@ -133,12 +128,7 @@ async def export_xls(user):
     # Calculate performance metrics
     performance = await _calculate_performance(trades)
     
-    # Merge account and performance data with license info
-    account_summary = {
-        "license_key": license_key,
-        "license_name": license_name,
-        **account, 
-        **performance
-    }
+    # Merge account and performance data
+    account_summary = {**account, **performance, "license_key": license_key}
     
     return await generate_xls_statement(account_summary, trades)

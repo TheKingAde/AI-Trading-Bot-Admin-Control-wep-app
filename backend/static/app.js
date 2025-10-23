@@ -389,25 +389,47 @@ async function fetchAllLicenses() {
 }
 
 function dl(url) {
+  // Check if an account is selected
   if (!state.selectedLicenseKey) {
-    alert('Please select an account before exporting.');
+    alert('Please select an account first before exporting.');
     return;
   }
   
-  const exportUrl = `${url}?license_key=${encodeURIComponent(state.selectedLicenseKey)}`;
+  // Add license_key parameter to the URL
+  const exportUrl = `${url}${url.includes('?') ? '&' : '?'}license_key=${encodeURIComponent(state.selectedLicenseKey)}`;
   
-  fetch('/api' + exportUrl, { headers: { 'Authorization': 'Bearer ' + state.token } })
-    .then(r => r.blob())
+  fetch('/api' + exportUrl, { 
+    headers: { 'Authorization': 'Bearer ' + state.token } 
+  })
+    .then(r => {
+      if (!r.ok) {
+        return r.json().then(data => {
+          throw new Error(data.error || 'Export failed');
+        });
+      }
+      return r.blob();
+    })
     .then(b => {
       const a = document.createElement('a');
-      a.href = URL.createObjectURL(b);
-      a.download = url.includes('pdf') ? 'statement.pdf' : 'statement.xlsx';
+      const objectUrl = URL.createObjectURL(b);
+      a.href = objectUrl;
+      
+      // Generate filename with license key prefix (first 8 chars)
+      const keyPrefix = state.selectedLicenseKey.substring(0, 8);
+      const date = new Date().toISOString().split('T')[0];
+      const extension = url.includes('pdf') ? 'pdf' : 'xlsx';
+      a.download = `statement_${keyPrefix}_${date}.${extension}`;
+      
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(a.href);
+      document.body.removeChild(a);
+      
+      // Clean up the object URL after a short delay
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 100);
     })
     .catch(err => {
-      console.error('Export failed:', err);
-      alert('Export failed. Please try again.');
+      alert('Export failed: ' + err.message);
+      console.error('Export error:', err);
     });
 }
 
