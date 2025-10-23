@@ -18,15 +18,24 @@ async def generate_pdf_statement(account_summary: dict, trades: list):
     c.drawString(72, height - 72, "Trading Statement")
     c.setFont("Helvetica", 10)
     c.drawString(72, height - 90, f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC")
+    
+    # License Information
+    y = height - 110
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(72, y, f"Account: {account_summary.get('license_name', 'Unknown')}")
+    y -= 16
+    c.setFont("Helvetica", 10)
+    c.drawString(72, y, f"License Key: {account_summary.get('license_key', 'N/A')}")
+    y -= 10
 
     # Account Summary
     c.setFont("Helvetica-Bold", 14)
-    y = height - 120
+    y -= 20
     c.drawString(72, y, "Account Summary")
     y -= 20
     c.setFont("Helvetica", 12)
     for k, v in account_summary.items():
-        if k not in ['win_rate', 'drawdown', 'total_trades']:
+        if k not in ['win_rate', 'drawdown', 'total_trades', 'license_key', 'license_name']:
             c.drawString(72, y, f"{k.replace('_', ' ').title()}: {v}")
             y -= 16
 
@@ -89,6 +98,13 @@ async def generate_xls_statement(account_summary: dict, trades: list):
     ws.append([f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"])
     ws.append([])
     
+    # License Information
+    ws.append(["Account Information"])
+    ws[f'A{ws.max_row}'].font = title_font
+    ws.append(["Account Name", account_summary.get('license_name', 'Unknown')])
+    ws.append(["License Key", account_summary.get('license_key', 'N/A')])
+    ws.append([])
+    
     # Account Summary Section
     ws.append(["Account Summary"])
     ws[f'A{ws.max_row}'].font = title_font
@@ -98,7 +114,7 @@ async def generate_xls_statement(account_summary: dict, trades: list):
         ws[cell].font = header_font
     
     for k, v in account_summary.items():
-        if k not in ['win_rate', 'drawdown', 'total_trades']:
+        if k not in ['win_rate', 'drawdown', 'total_trades', 'license_key', 'license_name']:
             ws.append([k.replace('_', ' ').title(), v])
     
     ws.append([])

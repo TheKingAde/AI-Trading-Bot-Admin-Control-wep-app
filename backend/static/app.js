@@ -389,7 +389,14 @@ async function fetchAllLicenses() {
 }
 
 function dl(url) {
-  fetch('/api' + url, { headers: { 'Authorization': 'Bearer ' + state.token } })
+  if (!state.selectedLicenseKey) {
+    alert('Please select an account before exporting.');
+    return;
+  }
+  
+  const exportUrl = `${url}?license_key=${encodeURIComponent(state.selectedLicenseKey)}`;
+  
+  fetch('/api' + exportUrl, { headers: { 'Authorization': 'Bearer ' + state.token } })
     .then(r => r.blob())
     .then(b => {
       const a = document.createElement('a');
@@ -397,6 +404,10 @@ function dl(url) {
       a.download = url.includes('pdf') ? 'statement.pdf' : 'statement.xlsx';
       a.click();
       URL.revokeObjectURL(a.href);
+    })
+    .catch(err => {
+      console.error('Export failed:', err);
+      alert('Export failed. Please try again.');
     });
 }
 
