@@ -37,6 +37,49 @@ DB_PATH = Path('data/training_data.db')
 TABLE_NAME = 'trades_dataset'
 MODEL_OUTPUT = 'entry_decision_model.pkl'
 
+# ======================== Training/Tuning Config (EDIT HERE) ========================
+# >>> TUNE: Train/Val/Test split ratios (must sum to 1.0)
+# For more validation data (smoother threshold tuning), increase VAL_RATIO slightly.
+TRAIN_RATIO = 0.70  # e.g., 0.70
+VAL_RATIO   = 0.15  # e.g., 0.15
+TEST_RATIO  = 0.15  # e.g., 0.15
+
+# >>> TUNE: Class imbalance handling
+# By default we compute scale_pos_weight automatically as (negatives/positives) on train set.
+# You can override it to make the model focus more on winners (positive class) which
+# often improves high-threshold precision at the cost of recall. Typical useful range: 5.0–15.0.
+# Set to None to use auto; set to a float to force. Example: 8.0 or 10.0
+FORCE_SCALE_POS_WEIGHT: float | None = None
+
+# >>> TUNE: Model complexity vs generalization
+# Smaller trees + stronger regularization can reduce false positives (improves precision)
+# but may miss some winners (reduces recall). Adjust within recommended ranges below.
+LGBM_PARAMS = {
+    'boosting_type': 'gbdt',
+    'num_leaves': 31,     # [16–63] fewer leaves => simpler model => often higher precision
+    'max_depth': 6,       # [4–10] limit tree depth to reduce overfit/false positives
+    'learning_rate': 0.05,# [0.02–0.1] lower => more estimators needed, smoother fit
+    'n_estimators': 500,  # [200–1500] with early stopping; higher if lowering learning_rate
+    'feature_fraction': 0.9, # [0.6–1.0] subsample features per tree (regularization)
+    'bagging_fraction': 0.8, # [0.6–1.0] subsample rows per iteration
+    'bagging_freq': 5,
+    'min_child_samples': 20, # [10–100] higher => smoother leaves, fewer spurious signals
+    'reg_alpha': 0.1,     # [0–1] L1; increase to simplify model
+    'reg_lambda': 0.1,    # [0–5] L2; increase to reduce overfitting
+    'random_state': 42,
+}
+
+# >>> OPTIONAL: Auto threshold tuning on validation set (recommended for live use)
+# When True, we scan thresholds to pick one that meets a target precision (win rate)
+# and a minimum trade frequency. This selected threshold is saved into the model file
+# and used for test-set classification metrics below.
+ENABLE_AUTO_THRESHOLD = False   # Set to True to enable auto-tuning
+THRESHOLD_TARGET_PRECISION = 0.50  # e.g., 0.50 = 50% win rate target
+THRESHOLD_MIN_TRADE_FREQ   = 0.05  # e.g., 0.05 = at least 5% of samples become ENTER
+THRESHOLD_SCAN_START = 0.35
+THRESHOLD_SCAN_STOP  = 0.90
+THRESHOLD_SCAN_STEP  = 0.01
+
 # Features for prediction (21 features - EXCLUDE target variables)
 INPUT_FEATURES = [
     'Symbol', 'Action', 'ATR_rel', 'EMA_diff', 'RSI14', 'Range_Ratio',
@@ -168,8 +211,12 @@ print(f"\n📊 Creating time-based train/validation/test split...")
 print("   (Respects chronological order—no data leakage)")
 
 n_samples = len(df)
-train_end = int(0.70 * n_samples)  # 70% train
-val_end = int(0.85 * n_samples)    # 15% val, 15% test
+
+# Ratios safety check (EDIT HERE block above)
+assert abs((TRAIN_RATIO + VAL_RATIO + TEST_RATIO) - 1.0) < 1e-6, "Train/Val/Test ratios must sum to 1.0"
+
+train_end = int(TRAIN_RATIO * n_samples)              # e.g., 70% train
+val_end = int((TRAIN_RATIO + VAL_RATIO) * n_samples)  # next 15% val, last 15% test
 
 X_train = X.iloc[:train_end]
 y_train = y.iloc[:train_end]
@@ -193,27 +240,37 @@ print(f"✅ Features scaled (robust to outliers)")
 # ======================== Train Binary Classifier ========================
 print(f"\n🚀 Training LightGBM Binary Classifier...")
 
-# Calculate class weight for imbalanced data
+# Calculate class weight for imbalanced data (auto baseline)
 class_weight = (y_train == 0).sum() / (y_train == 1).sum()
 print(f"   Class imbalance ratio: {class_weight:.2f}:1 (loss:win)")
+
+# >>> EDIT HERE: Force positive-class upweighting (if configured)
+# Using a larger scale_pos_weight makes the model prioritize correctly classifying WINs,
+# which typically raises precision at higher thresholds. If FORCE_SCALE_POS_WEIGHT is None,
+# we use the auto-computed ratio above.
+scale_pos = FORCE_SCALE_POS_WEIGHT if FORCE_SCALE_POS_WEIGHT is not None else class_weight
+if FORCE_SCALE_POS_WEIGHT is not None:
+    print(f"   Forcing scale_pos_weight={FORCE_SCALE_POS_WEIGHT} (recommended range 5–15 for sparse winners)")
+else:
+    print(f"   Using auto scale_pos_weight={scale_pos:.2f}")
 
 model = lgb.LGBMClassifier(
     objective='binary',
     metric='auc',
-    boosting_type='gbdt',
-    num_leaves=31,
-    max_depth=6,
-    learning_rate=0.05,
-    n_estimators=500,
-    feature_fraction=0.9,
-    bagging_fraction=0.8,
-    bagging_freq=5,
-    min_child_samples=20,
-    scale_pos_weight=class_weight,  # Handle imbalance
-    reg_alpha=0.1,
-    reg_lambda=0.1,
+    boosting_type=LGBM_PARAMS['boosting_type'],
+    num_leaves=LGBM_PARAMS['num_leaves'],
+    max_depth=LGBM_PARAMS['max_depth'],
+    learning_rate=LGBM_PARAMS['learning_rate'],
+    n_estimators=LGBM_PARAMS['n_estimators'],
+    feature_fraction=LGBM_PARAMS['feature_fraction'],
+    bagging_fraction=LGBM_PARAMS['bagging_fraction'],
+    bagging_freq=LGBM_PARAMS['bagging_freq'],
+    min_child_samples=LGBM_PARAMS['min_child_samples'],
+    scale_pos_weight=scale_pos,  # Handle imbalance (auto or forced)
+    reg_alpha=LGBM_PARAMS['reg_alpha'],
+    reg_lambda=LGBM_PARAMS['reg_lambda'],
     verbose=-1,
-    random_state=42
+    random_state=LGBM_PARAMS['random_state']
 )
 
 print(f"   Training with early stopping (50 rounds patience)...")
@@ -259,13 +316,59 @@ print(f"  False Positives (wrong entry):       {cm[0,1]:,}")
 print(f"  False Negatives (missed opportunity): {cm[1,0]:,}")
 print(f"  True Positives (correct entry):      {cm[1,1]:,}")
 
+# ======================== (Optional) Threshold Tuning on Validation ========================
+# Enable ENABLE_AUTO_THRESHOLD above to pick a threshold that meets your target precision and
+# minimum trade frequency. This chosen threshold will be used for test metrics and saved.
+chosen_threshold = 0.5  # default
+if ENABLE_AUTO_THRESHOLD:
+    print(f"\n{'=' * 80}")
+    print("THRESHOLD TUNING (Validation Set)")
+    print(f"{'=' * 80}")
+    thresholds = np.arange(THRESHOLD_SCAN_START, THRESHOLD_SCAN_STOP + 1e-9, THRESHOLD_SCAN_STEP)
+    best = None
+    fallback_40 = None
+    best_f1 = (0.0, 0.5)  # (f1, threshold)
+    for t in thresholds:
+        pred_t = (y_val_pred_proba >= t).astype(int)
+        prec_t = precision_score(y_val, pred_t, zero_division=0)
+        rec_t = recall_score(y_val, pred_t, zero_division=0)
+        f1_t = f1_score(y_val, pred_t, zero_division=0)
+        trade_freq_t = pred_t.mean()
+        # Track max F1 for fallback
+        if f1_t > best_f1[0]:
+            best_f1 = (f1_t, t)
+        # Candidate meeting main targets
+        if prec_t >= THRESHOLD_TARGET_PRECISION and trade_freq_t >= THRESHOLD_MIN_TRADE_FREQ:
+            if (best is None) or (trade_freq_t > best['trade_freq']):
+                best = {'t': t, 'precision': prec_t, 'recall': rec_t, 'f1': f1_t, 'trade_freq': trade_freq_t}
+        # Fallback candidate for 40% precision
+        if prec_t >= 0.40:
+            if (fallback_40 is None) or (f1_t > fallback_40['f1']):
+                fallback_40 = {'t': t, 'precision': prec_t, 'recall': rec_t, 'f1': f1_t, 'trade_freq': trade_freq_t}
+
+    if best is not None:
+        chosen_threshold = float(best['t'])
+        print(f"\n✅ Selected threshold {chosen_threshold:.2f} on validation:")
+        print(f"   Precision: {best['precision']:.1%} | Recall: {best['recall']:.1%} | F1: {best['f1']:.4f} | Trade %: {best['trade_freq']:.1%}")
+        print("   Rationale: Meets target precision and min trade frequency; chose highest trade % among candidates.")
+    elif fallback_40 is not None:
+        chosen_threshold = float(fallback_40['t'])
+        print(f"\n⚠️  Falling back to threshold {chosen_threshold:.2f} (>=40% precision):")
+        print(f"   Precision: {fallback_40['precision']:.1%} | Recall: {fallback_40['recall']:.1%} | F1: {fallback_40['f1']:.4f} | Trade %: {fallback_40['trade_freq']:.1%}")
+    else:
+        chosen_threshold = float(best_f1[1])
+        print(f"\n❌ No threshold met precision targets. Using max-F1 threshold {chosen_threshold:.2f} as last resort.")
+
+print(f"\nUsing classification threshold: {chosen_threshold:.2f} (set ENABLE_AUTO_THRESHOLD=True to auto-tune)")
+
 # ======================== Test Set Evaluation ========================
 print(f"\n{'=' * 80}")
 print(f"TEST SET PERFORMANCE (Unseen Data)")
 print(f"{'=' * 80}")
 
 y_test_pred_proba = model.predict_proba(X_test_scaled)[:, 1]
-y_test_pred = (y_test_pred_proba >= 0.5).astype(int)
+# Use the chosen threshold (0.5 by default or auto-tuned on validation if enabled)
+y_test_pred = (y_test_pred_proba >= chosen_threshold).astype(int)
 
 test_acc = accuracy_score(y_test, y_test_pred)
 test_prec = precision_score(y_test, y_test_pred, zero_division=0)
@@ -353,7 +456,11 @@ model_package = {
     'features': INPUT_FEATURES,
     'feature_count': len(INPUT_FEATURES),
     'target': TARGET,
-    'threshold': 0.5,
+    # >>> Saved decision threshold
+    # This is the classification cutoff your live system will use.
+    # Set ENABLE_AUTO_THRESHOLD=True above to auto-select from validation.
+    # Otherwise it remains 0.50 by default.
+    'threshold': float(chosen_threshold),
     'categorical_features': categorical_features,
     'performance': {
         'test_accuracy': test_acc,
