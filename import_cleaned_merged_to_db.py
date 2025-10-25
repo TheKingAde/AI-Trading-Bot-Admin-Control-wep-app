@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import List, Tuple
 
 # --- Configuration defaults ---
-DEFAULT_DB_PATH = Path('data') / 'imported_data.db'
+DEFAULT_DB_PATH = Path('data') / 'training_data.db'
 DEFAULT_TABLE = 'trades_dataset'
 DEFAULT_CSV = Path('cleaned_merged.csv')
 BATCH_SIZE = 1000
