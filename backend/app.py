@@ -4,9 +4,13 @@ import asyncio
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from quart import Quart, jsonify, send_from_directory
+import numpy as np
+import joblib
+from quart import Quart, jsonify, send_from_directory, request
 from quart_cors import cors
 from dotenv import load_dotenv
+import sqlite3
+import uuid
 
 BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
@@ -43,6 +47,25 @@ app.register_blueprint(export_bp, url_prefix='/api')
 @app.before_serving
 async def startup():
     await init_db()
+    # Load model once for fast inference
+    try:
+        model_path = ROOT_DIR / 'entry_decision_model.pkl'
+        app.model_data = joblib.load(model_path)
+        app.model = app.model_data['model']
+        app.scaler = app.model_data['scaler']
+        app.features = app.model_data['features']
+        app.threshold = float(app.model_data.get('threshold', 0.5))
+        # Precompute indices for categorical expectation
+        app.feature_set = set(app.features)
+        print(f"✅ Loaded model at startup: {model_path}")
+        print(f"   Features: {len(app.features)} | Threshold: {app.threshold:.2f} | Trained: {app.model_data.get('training_date')} ")
+    except Exception as e:
+        # Defer failure to request time with clear error
+        app.model = None
+        app.scaler = None
+        app.features = None
+        app.threshold = 0.5
+        print(f"⚠️  Warning: Could not load model at startup: {e}")
 
 
 @app.get('/api/health')
@@ -54,6 +77,148 @@ async def health():
 async def index():
     # Serve frontend index from static
     return await send_from_directory(app.static_folder, 'index.html')
+
+
+# ===================== Inference Endpoint for EA =====================
+# POST /api/entry-decision
+# Accepts JSON either as:
+# 1) { "features": [v1, v2, ..., v21] } in the exact model training order
+# 2) { "Symbol": ..., "Action": ..., ..., "Momentum_Strength": ... } keyed by feature names
+# Returns: { enter: 0|1, confidence: float, probability: float, threshold: float }
+
+def _build_feature_df(payload: dict):
+    if not getattr(app, 'model', None) or not getattr(app, 'scaler', None) or not getattr(app, 'features', None):
+        raise RuntimeError("Model not loaded on server. Train and place 'entry_decision_model.pkl' at project root.")
+
+    feats = app.features
+
+    # Case 1: array in correct order
+    if isinstance(payload, dict) and 'features' in payload and isinstance(payload['features'], list):
+        values = payload['features']
+        if len(values) != len(feats):
+            raise ValueError(f"Expected {len(feats)} features, got {len(values)}")
+        row = values
+    else:
+        # Case 2: dict keyed by names
+        missing = [f for f in feats if f not in payload]
+        if missing:
+            raise ValueError(f"Missing required feature fields: {missing}")
+        # Normalize some fields (Use_BE can be bool/0-1; Symbol/Action expected numeric ids)
+        row = []
+        for f in feats:
+            v = payload.get(f)
+            if f == 'Use_BE':
+                v = 1 if (v in (1, True, '1', 'true', 'True', 'YES', 'yes')) else 0
+            # Coerce to float where possible
+            try:
+                v = float(v)
+            except Exception:
+                # Fallback: unknown category -> 0
+                v = 0.0
+            row.append(v)
+
+    # Create DataFrame with proper feature names to avoid warnings and ensure order
+    import pandas as pd
+    df = pd.DataFrame([row], columns=feats)
+    # Replace inf/nan with 0 (training used median fills; 0 is a safe neutral after robust scaling)
+    df = df.replace([np.inf, -np.inf], np.nan).fillna(0)
+    return df
+
+
+@app.post('/api/entry-decision')
+async def entry_decision():
+    try:
+        payload = await request.get_json()
+        if payload is None:
+            return jsonify({"error": "Expected JSON body"}), 400
+
+        df = _build_feature_df(payload)
+        Xs = app.scaler.transform(df)
+        proba = float(app.model.predict_proba(Xs)[0, 1])
+        thr = float(app.threshold)
+        enter = 1 if proba >= thr else 0
+        confidence = max(0.0, min(1.0, abs(proba - thr) * 2.0))
+
+        # ===================== Save features to DB =====================
+        # Generate a unique Trade_ID for this request
+        trade_id = str(uuid.uuid4())
+        # Get all columns in trades_dataset
+        db_path = str(ROOT_DIR / 'data' / 'training_data.db')
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute(f"PRAGMA table_info(trades_dataset)")
+        columns = [row[1] for row in cursor.fetchall()]
+        # Build row dict
+        row = {col: None for col in columns}
+        # Fill in features
+        for i, feat in enumerate(app.features):
+            val = df.iloc[0][feat]
+            row[feat] = val
+        # Fill in Trade_ID
+        if 'Trade_ID' in row:
+            row['Trade_ID'] = trade_id
+        # Fill in Time
+        if 'Time' in row:
+            from datetime import datetime
+            row['Time'] = datetime.utcnow().isoformat()
+        # Profitable, Final_PnL, Outcome_Category left as None/NULL
+        # Any other columns (e.g., EA-specific) can be filled from payload if present
+        for k in payload:
+            if k in row and k not in app.features:
+                row[k] = payload[k]
+        # Prepare insert
+        col_names = ','.join(row.keys())
+        placeholders = ','.join(['?' for _ in row])
+        values = [row[k] for k in row]
+        cursor.execute(f"INSERT INTO trades_dataset ({col_names}) VALUES ({placeholders})", values)
+        conn.commit()
+        conn.close()
+
+        return jsonify({
+            "enter": enter,            # 1=ENTER, 0=STAY OUT
+            "probability": round(proba, 6),
+            "confidence": round(confidence, 6),
+            "threshold": thr
+            ,"trade_id": trade_id
+        })
+    except ValueError as ve:
+        return jsonify({"error": str(ve)}), 400
+    except Exception as e:
+        return jsonify({"error": f"Prediction failed: {e}"}), 500
+
+
+# ===================== Update trade outcome after close =====================
+# POST /api/entry-update
+# Body: { "trade_id": ..., "Profitable": 1/0, "Final_PnL": float, "Outcome_Category": "Win"/"Loss" }
+# Updates the row with matching Trade_ID
+@app.post('/api/entry-update')
+async def entry_update():
+    try:
+        payload = await request.get_json()
+        if payload is None:
+            return jsonify({"error": "Expected JSON body"}), 400
+        trade_id = payload.get('trade_id')
+        if not trade_id:
+            return jsonify({"error": "Missing trade_id"}), 400
+        # Only allow updating certain fields
+        allowed = ['Profitable', 'Final_PnL', 'Outcome_Category']
+        updates = {k: payload[k] for k in allowed if k in payload}
+        if not updates:
+            return jsonify({"error": "No updatable fields provided"}), 400
+        db_path = str(ROOT_DIR / 'data' / 'training_data.db')
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        set_clause = ', '.join([f"{k}=?" for k in updates])
+        values = list(updates.values()) + [trade_id]
+        cursor.execute(f"UPDATE trades_dataset SET {set_clause} WHERE Trade_ID=?", values)
+        conn.commit()
+        affected = cursor.rowcount
+        conn.close()
+        if affected == 0:
+            return jsonify({"error": "Trade_ID not found"}), 404
+        return jsonify({"updated": affected, "trade_id": trade_id})
+    except Exception as e:
+        return jsonify({"error": f"Update failed: {e}"}), 500
 
 
 if __name__ == '__main__':
