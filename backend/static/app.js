@@ -412,6 +412,9 @@ function updateLicenseForm() {
   } else if (action === 'status') {
     show('.field-license-key');
     if (submitBtn) submitBtn.textContent = 'Check Status';
+  } else if (action === 'delete') {
+    show('.field-license-key');
+    if (submitBtn) submitBtn.textContent = 'Delete License';
   }
 }
 
@@ -436,6 +439,11 @@ async function submitLicenseAction() {
       res = await api('/license/deactivate', { method: 'POST', body: JSON.stringify({ key }) });
     } else if (action === 'renew') {
       res = await api('/license/renew', { method: 'POST', body: JSON.stringify({ key, days }) });
+    } else if (action === 'delete') {
+      if (!confirm(`Are you sure you want to delete license key: ${key}?\n\nThis action cannot be undone!`)) {
+        return;
+      }
+      res = await api('/license/delete', { method: 'POST', body: JSON.stringify({ key }) });
     }
     displayLicenseResult(res, false);
     await fetchAllLicenses(); // Refresh the license list
@@ -457,15 +465,19 @@ function displayLicenseResult(data, isError) {
   resultDiv.className = 'license-result success-result';
   let html = '<div class="result-card">';
   
-  if (data.key) html += `<div class="result-item"><span class="result-label">License Key:</span> <span class="result-value">${data.key}</span></div>`;
-  if (data.name) html += `<div class="result-item"><span class="result-label">Name:</span> <span class="result-value">${data.name}</span></div>`;
-  if (data.status) {
-    const statusClass = data.status === 'active' ? 'status-active' : 'status-inactive';
-    html += `<div class="result-item"><span class="result-label">Status:</span> <span class="result-value ${statusClass}">${data.status.toUpperCase()}</span></div>`;
-  }
-  if (data.expires_at) {
-    const date = new Date(data.expires_at).toLocaleDateString();
-    html += `<div class="result-item"><span class="result-label">Expires At:</span> <span class="result-value">${date}</span></div>`;
+  if (data.deleted) {
+    html += `<div class="result-item"><span class="result-label">✅ License Deleted:</span> <span class="result-value">${data.key}</span></div>`;
+  } else {
+    if (data.key) html += `<div class="result-item"><span class="result-label">License Key:</span> <span class="result-value">${data.key}</span></div>`;
+    if (data.name) html += `<div class="result-item"><span class="result-label">Name:</span> <span class="result-value">${data.name}</span></div>`;
+    if (data.status) {
+      const statusClass = data.status === 'active' ? 'status-active' : 'status-inactive';
+      html += `<div class="result-item"><span class="result-label">Status:</span> <span class="result-value ${statusClass}">${data.status.toUpperCase()}</span></div>`;
+    }
+    if (data.expires_at) {
+      const date = new Date(data.expires_at).toLocaleDateString();
+      html += `<div class="result-item"><span class="result-label">Expires At:</span> <span class="result-value">${date}</span></div>`;
+    }
   }
   
   html += '</div>';

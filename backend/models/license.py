@@ -58,3 +58,9 @@ async def get_all_licenses(db):
             }
             for row in rows
         ]
+
+
+async def delete_license(db, key: str):
+    await db.execute('DELETE FROM licenses WHERE key = ?', (key,))
+    await db.commit()
+    return {"key": key, "deleted": True}

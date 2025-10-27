@@ -2,7 +2,7 @@ from quart import Blueprint, request, jsonify
 
 from models.db import get_db
 from utils.security import auth_required
-from models.license import get_license_status, activate_license, deactivate_license, renew_license, get_all_licenses
+from models.license import get_license_status, activate_license, deactivate_license, renew_license, get_all_licenses, delete_license
 
 license_bp = Blueprint('license', __name__)
 
@@ -97,3 +97,15 @@ async def license_all(user):
     async with get_db() as db:
         licenses = await get_all_licenses(db)
     return jsonify(licenses)
+
+
+@license_bp.post('/license/delete')
+@auth_required
+async def license_delete(user):
+    data = await request.get_json()
+    key = data.get('key')
+    if not key:
+        return jsonify({"error": "key is required"}), 400
+    async with get_db() as db:
+        res = await delete_license(db, key)
+    return jsonify(res)
