@@ -20,7 +20,8 @@ input int magic_number = 307037; // Magic number
 CTrade m_trade;
 CPositionInfo m_position;
 int atrHandle;
-int emaHandle;
+int ema20Handle;   // EMA 20 (not 200!)
+int ema50Handle;   // EMA 50
 int rsiHandle;
 double atrValue[];
 bool allow_buy_trade = true;
@@ -333,7 +334,7 @@ bool CheckLicense()
   }
 
 // ==================== ML MODEL FEATURE CALCULATION ====================
-// Calculate all 21 features required by the model
+// Calculate all 21 features required by the model (MATCHING DATA COLLECTION)
 bool CalculateModelFeatures(int action, double &features[])
   {
    ArrayResize(features, 21);
@@ -356,56 +357,54 @@ bool CalculateModelFeatures(int action, double &features[])
    double curr_price = (action == 1) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
    features[2] = atr[0] / curr_price;
    
-   // Get EMA value
-   double ema[];
-   if(CopyBuffer(emaHandle, 0, 0, 1, ema) <= 0)
+   // Get EMA20 and EMA50 values
+   double ema20Buffer[], ema50Buffer[];
+   if(CopyBuffer(ema20Handle, 0, 0, 1, ema20Buffer) <= 0)
      {
-      Print("Error getting EMA value");
+      Print("Error getting EMA20 value");
+      return false;
+     }
+   if(CopyBuffer(ema50Handle, 0, 0, 1, ema50Buffer) <= 0)
+     {
+      Print("Error getting EMA50 value");
       return false;
      }
    
-   // Feature 3: EMA_diff (price relative to EMA)
-   features[3] = (curr_price - ema[0]) / curr_price;
+   double ema20 = ema20Buffer[0];
+   double ema50 = ema50Buffer[0];
+   
+   // Feature 3: EMA_diff ((EMA20 - EMA50) / EMA50)
+   features[3] = (ema50 != 0.0) ? (ema20 - ema50) / ema50 : 0.0;
    
    // Get RSI value
-   double rsi[];
-   if(CopyBuffer(rsiHandle, 0, 0, 1, rsi) <= 0)
+   double rsiBuffer[];
+   if(CopyBuffer(rsiHandle, 0, 0, 1, rsiBuffer) <= 0)
      {
       Print("Error getting RSI value");
       return false;
      }
    
    // Feature 4: RSI14
-   features[4] = rsi[0];
+   features[4] = rsiBuffer[0];
    
-   // Get recent candle data for range calculations
-   double high[], low[], open[], close[];
-   if(CopyHigh(_Symbol, PERIOD_D1, 0, 30, high) <= 0 ||
-      CopyLow(_Symbol, PERIOD_D1, 0, 30, low) <= 0 ||
-      CopyOpen(_Symbol, PERIOD_D1, 0, 30, open) <= 0 ||
-      CopyClose(_Symbol, PERIOD_D1, 0, 30, close) <= 0)
-     {
-      Print("Error getting candle data");
-      return false;
-     }
+   // Feature 5: Range_Ratio (prev D1 range / ATR)
+   double prev_high = iHigh(_Symbol, PERIOD_D1, 1);
+   double prev_low = iLow(_Symbol, PERIOD_D1, 1);
+   double prev_range = prev_high - prev_low;
+   features[5] = (atr[0] > 0) ? prev_range / atr[0] : 0.0;
    
-   // Feature 5: Range_Ratio (current range vs average range)
-   double curr_range = high[0] - low[0];
-   double avg_range = 0;
-   for(int i = 1; i < 30; i++)
-      avg_range += (high[i] - low[i]);
-   avg_range /= 29;
-   features[5] = (avg_range > 0) ? curr_range / avg_range : 1.0;
+   // Get 30-period high and low on D1
+   int high_idx = iHighest(_Symbol, PERIOD_D1, MODE_HIGH, 30, 1);
+   int low_idx = iLowest(_Symbol, PERIOD_D1, MODE_LOW, 30, 1);
+   double high30 = iHigh(_Symbol, PERIOD_D1, high_idx);
+   double low30 = iLow(_Symbol, PERIOD_D1, low_idx);
+   double close_now = iClose(_Symbol, PERIOD_D1, 0);
    
-   // Get 30-period high and low
-   double high_30 = high[ArrayMaximum(high, 0, 30)];
-   double low_30 = low[ArrayMinimum(low, 0, 30)];
+   // Feature 6: Pct_from_30h ((30h - close) / close)
+   features[6] = (close_now > 0) ? (high30 - close_now) / close_now : 0.0;
    
-   // Feature 6: Pct_from_30h (distance from 30-bar high)
-   features[6] = (high_30 > 0) ? (curr_price - high_30) / high_30 : 0;
-   
-   // Feature 7: Pct_from_30l (distance from 30-bar low)
-   features[7] = (low_30 > 0) ? (curr_price - low_30) / low_30 : 0;
+   // Feature 7: Pct_from_30l ((close - 30l) / close)
+   features[7] = (close_now > 0) ? (close_now - low30) / close_now : 0.0;
    
    // Feature 8: Breakout_level_atr_multiplier (using ATR_Multiplier from inputs)
    features[8] = ATR_Multiplier;
@@ -440,73 +439,153 @@ bool CalculateModelFeatures(int action, double &features[])
    TimeToStruct(TimeCurrent(), dt);
    features[14] = dt.day_of_week;
    
-   // Feature 15: Consecutive_Bullish (count recent bullish candles)
+   // === H1 CANDLE PATTERN FEATURES (7 most recent CLOSED candles) ===
+   // Collect 7 H1 candles (index 1-7, skip current forming candle at index 0)
+   double total_body = 0.0;
+   double total_range = 0.0;
    int bullish_count = 0;
-   for(int i = 1; i < 10 && i < ArraySize(close); i++)
+   int consecutive_bullish = 0;
+   int consecutive_bearish = 0;
+   
+   // Arrays to store H1 candle data
+   double h1_open[], h1_high[], h1_low[], h1_close[];
+   
+   if(CopyOpen(_Symbol, PERIOD_H1, 1, 7, h1_open) <= 0 ||
+      CopyHigh(_Symbol, PERIOD_H1, 1, 7, h1_high) <= 0 ||
+      CopyLow(_Symbol, PERIOD_H1, 1, 7, h1_low) <= 0 ||
+      CopyClose(_Symbol, PERIOD_H1, 1, 7, h1_close) <= 0)
      {
-      if(close[i] > open[i])
+      Print("Error getting H1 candle data");
+      return false;
+     }
+   
+   // Process 7 H1 candles
+   for(int i = 0; i < 7; i++)
+     {
+      double body_size = MathAbs(h1_close[i] - h1_open[i]);
+      double range = h1_high[i] - h1_low[i];
+      int is_bullish = (h1_close[i] > h1_open[i]) ? 1 : 0;
+      
+      total_body += body_size;
+      total_range += range;
+      
+      if(is_bullish)
          bullish_count++;
+     }
+   
+   // Count consecutive bullish from most recent (index 0 is most recent)
+   for(int i = 0; i < 7; i++)
+     {
+      if(h1_close[i] > h1_open[i])
+         consecutive_bullish++;
       else
          break;
      }
-   features[15] = bullish_count;
    
-   // Feature 16: Consecutive_Bearish (count recent bearish candles)
-   int bearish_count = 0;
-   for(int i = 1; i < 10 && i < ArraySize(close); i++)
+   // Count consecutive bearish from most recent
+   for(int i = 0; i < 7; i++)
      {
-      if(close[i] < open[i])
-         bearish_count++;
+      if(h1_close[i] < h1_open[i])
+         consecutive_bearish++;
       else
          break;
      }
-   features[16] = bearish_count;
    
-   // Feature 17: Avg_Body_Size (average candle body size)
-   double avg_body = 0;
-   for(int i = 1; i < 20 && i < ArraySize(close); i++)
-      avg_body += MathAbs(close[i] - open[i]);
-   features[17] = (avg_body > 0) ? avg_body / MathMin(19, ArraySize(close)-1) : 0;
+   // Feature 15: Consecutive_Bullish
+   features[15] = consecutive_bullish;
    
-   // Feature 18: Avg_Range (already calculated above)
-   features[18] = avg_range;
+   // Feature 16: Consecutive_Bearish
+   features[16] = consecutive_bearish;
    
-   // Feature 19: Trend_Score (EMA slope approximation)
-   double ema_history[];
-   if(CopyBuffer(emaHandle, 0, 0, 5, ema_history) > 0 && ArraySize(ema_history) >= 5)
-     {
-      double ema_slope = (ema_history[0] - ema_history[4]) / ema_history[4];
-      features[19] = ema_slope;
-     }
-   else
-      features[19] = 0;
+   // Feature 17: Avg_Body_Size
+   features[17] = total_body / 7.0;
    
-   // Feature 20: Momentum_Strength (rate of price change)
-   if(ArraySize(close) >= 10)
-     {
-      double momentum = (close[0] - close[9]) / close[9];
-      features[20] = momentum;
-     }
-   else
-      features[20] = 0;
+   // Feature 18: Avg_Range
+   features[18] = total_range / 7.0;
+   
+   // Feature 19: Trend_Score ((bullish_count * 2) - 7)
+   // Range: -7 (all bearish) to +7 (all bullish)
+   features[19] = (bullish_count * 2) - 7;
+   
+   // Feature 20: Momentum_Strength (avg_body / avg_range)
+   double avg_range = total_range / 7.0;
+   features[20] = (avg_range > 0) ? (total_body / 7.0) / avg_range : 0.0;
    
    return true;
   }
 
-// Send features to ML model and get decision
-bool GetModelDecision(double &features[], string &trade_id_out, double &probability_out)
+// Debug function to print all features with labels
+void PrintModelFeatures(double &features[])
+  {
+   string feature_names[21] = {
+      "Symbol", "Action", "ATR_rel", "EMA_diff", "RSI14", "Range_Ratio",
+      "Pct_from_30h", "Pct_from_30l", "Breakout_level_atr_multiplier",
+      "SL_ATR_Mult", "TP_ATR_Mult", "Use_BE", "Risk_Reward_Ratio",
+      "High_Volatility", "Day_of_Week", "Consecutive_Bullish",
+      "Consecutive_Bearish", "Avg_Body_Size", "Avg_Range",
+      "Trend_Score", "Momentum_Strength"
+   };
+   
+   Print("========== ML MODEL FEATURES ==========");
+   for(int i = 0; i < 21; i++)
+     {
+      Print(StringFormat("[%d] %s = %.8f", i, feature_names[i], features[i]));
+     }
+   Print("========================================");
+  }
+
+// Send features to ML model and get decision WITH FULL TRADE CONTEXT
+bool GetModelDecision(double &features[], string &trade_id_out, double &probability_out, 
+                      double entry_price, double sl_price, double tp_price, double atr_value)
   {
    string url = admin_url + "/api/entry-decision";
    string headers = "Content-Type: application/json\r\n";
    
-   // Build JSON payload with features array
-   string json = "{\"features\":[";
-   for(int i = 0; i < 21; i++)
-     {
-      json += DoubleToString(features[i], 8);
-      if(i < 20) json += ",";
-     }
-   json += "]}";
+   // Get current timestamp in ISO format
+   MqlDateTime dt_struct;
+   TimeToStruct(TimeCurrent(), dt_struct);
+   string timestamp = StringFormat("%04d-%02d-%02dT%02d:%02d:%02d",
+                                    dt_struct.year, dt_struct.mon, dt_struct.day,
+                                    dt_struct.hour, dt_struct.min, dt_struct.sec);
+   
+   // Build COMPLETE JSON payload with ALL database fields
+   string json = "{";
+   
+   // Timestamp
+   json += "\"Time\":\"" + timestamp + "\",";
+   
+   // Named features (21 model features)
+   json += "\"Symbol\":" + DoubleToString(features[0], 0) + ",";
+   json += "\"Action\":" + DoubleToString(features[1], 0) + ",";
+   json += "\"ATR_rel\":" + DoubleToString(features[2], 8) + ",";
+   json += "\"EMA_diff\":" + DoubleToString(features[3], 8) + ",";
+   json += "\"RSI14\":" + DoubleToString(features[4], 8) + ",";
+   json += "\"Range_Ratio\":" + DoubleToString(features[5], 8) + ",";
+   json += "\"Pct_from_30h\":" + DoubleToString(features[6], 8) + ",";
+   json += "\"Pct_from_30l\":" + DoubleToString(features[7], 8) + ",";
+   json += "\"Breakout_level_atr_multiplier\":" + DoubleToString(features[8], 8) + ",";
+   json += "\"SL_ATR_Mult\":" + DoubleToString(features[9], 8) + ",";
+   json += "\"TP_ATR_Mult\":" + DoubleToString(features[10], 8) + ",";
+   json += "\"Use_BE\":" + DoubleToString(features[11], 0) + ",";
+   json += "\"Risk_Reward_Ratio\":" + DoubleToString(features[12], 8) + ",";
+   json += "\"High_Volatility\":" + DoubleToString(features[13], 0) + ",";
+   json += "\"Day_of_Week\":" + DoubleToString(features[14], 0) + ",";
+   json += "\"Consecutive_Bullish\":" + DoubleToString(features[15], 0) + ",";
+   json += "\"Consecutive_Bearish\":" + DoubleToString(features[16], 0) + ",";
+   json += "\"Avg_Body_Size\":" + DoubleToString(features[17], 8) + ",";
+   json += "\"Avg_Range\":" + DoubleToString(features[18], 8) + ",";
+   json += "\"Trend_Score\":" + DoubleToString(features[19], 0) + ",";
+   json += "\"Momentum_Strength\":" + DoubleToString(features[20], 8) + ",";
+   
+   // Trading metadata (NOT part of model features but needed for DB)
+   json += "\"Entry\":" + DoubleToString(entry_price, _Digits) + ",";
+   json += "\"SL\":" + DoubleToString(sl_price, _Digits) + ",";
+   json += "\"TP\":" + DoubleToString(tp_price, _Digits) + ",";
+   json += "\"ATR\":" + DoubleToString(atr_value, _Digits);
+   
+   // Exit_Price, Profitable, Final_PnL, Outcome_Category will be NULL until trade closes
+   
+   json += "}";
    
    char post_data[];
    char result_data[];
@@ -562,15 +641,15 @@ bool GetModelDecision(double &features[], string &trade_id_out, double &probabil
   }
 
 // Update trade outcome after close
-bool UpdateTradeOutcome(string trade_id, double profit, string outcome)
+bool UpdateTradeOutcome(string trade_id, double profit, string outcome, double exit_price)
   {
    string url = admin_url + "/api/entry-update";
    string headers = "Content-Type: application/json\r\n";
    
    int profitable = (profit > 0) ? 1 : 0;
    
-   string json = StringFormat("{\"trade_id\":\"%s\",\"Profitable\":%d,\"Final_PnL\":%.2f,\"Outcome_Category\":\"%s\"}",
-                              trade_id, profitable, profit, outcome);
+   string json = StringFormat("{\"trade_id\":\"%s\",\"Profitable\":%d,\"Final_PnL\":%.2f,\"Outcome_Category\":\"%s\",\"Exit_Price\":%.5f}",
+                              trade_id, profitable, profit, outcome, exit_price);
    
    char post_data[];
    char result_data[];
@@ -631,11 +710,19 @@ int OnInit()
       return(INIT_FAILED);
      }
    
-   // Create EMA handle (200-period for trend)
-   emaHandle = iMA(_Symbol, PERIOD_D1, 200, 0, MODE_EMA, PRICE_CLOSE);
-   if(emaHandle == INVALID_HANDLE)
+   // Create EMA20 handle (for EMA_diff calculation)
+   ema20Handle = iMA(_Symbol, PERIOD_D1, 20, 0, MODE_EMA, PRICE_CLOSE);
+   if(ema20Handle == INVALID_HANDLE)
      {
-      Print("Error creating EMA handle. Code: ", _LastError);
+      Print("Error creating EMA20 handle. Code: ", _LastError);
+      return(INIT_FAILED);
+     }
+   
+   // Create EMA50 handle (for EMA_diff calculation)
+   ema50Handle = iMA(_Symbol, PERIOD_D1, 50, 0, MODE_EMA, PRICE_CLOSE);
+   if(ema50Handle == INVALID_HANDLE)
+     {
+      Print("Error creating EMA50 handle. Code: ", _LastError);
       return(INIT_FAILED);
      }
    
@@ -669,8 +756,10 @@ void OnDeinit(const int reason)
    SendTelegramMessage(message);
    if(atrHandle != INVALID_HANDLE)
       IndicatorRelease(atrHandle);
-   if(emaHandle != INVALID_HANDLE)
-      IndicatorRelease(emaHandle);
+   if(ema20Handle != INVALID_HANDLE)
+      IndicatorRelease(ema20Handle);
+   if(ema50Handle != INVALID_HANDLE)
+      IndicatorRelease(ema50Handle);
    if(rsiHandle != INVALID_HANDLE)
       IndicatorRelease(rsiHandle);
   }
@@ -743,6 +832,9 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
                  {
                   // Trade is being closed - update outcome
                   status = "closed";
+                  // Get exit price
+                  double exit_price = HistoryDealGetDouble(deal_ticket, DEAL_PRICE);
+                  
                   // Determine trade direction
                   if(deal_type == DEAL_TYPE_BUY)
                      trade_type = "SELL";
@@ -752,11 +844,11 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
                      else
                         return;
                   
-                  // Update ML model with trade outcome
+                  // Update ML model with trade outcome INCLUDING EXIT PRICE
                   if(pending_trade_id != "")
                     {
                      string outcome = (profit > 0) ? "Win" : "Loss";
-                     UpdateTradeOutcome(pending_trade_id, profit, outcome);
+                     UpdateTradeOutcome(pending_trade_id, profit, outcome, exit_price);
                      pending_trade_id = ""; // Reset after update
                     }
                  }
@@ -893,6 +985,10 @@ void OnTick()
 // ✅ BUY condition with ML model confirmation
    if(curr_ask_price > upperBreakout && allow_buy_trade)
      {
+      // Calculate SL/TP BEFORE feature calculation (needed for GetModelDecision)
+      double stopLoss   = NormalizeDouble(upperBreakout - (atrValue[0] * SL_ATR_Multiplier), _Digits);
+      double takeProfit = NormalizeDouble(upperBreakout + (atrValue[0] * TP_ATR_Multiplier), _Digits);
+      
       // Calculate features for BUY action
       double features[];
       if(!CalculateModelFeatures(1, features)) // 1 = BUY
@@ -901,10 +997,14 @@ void OnTick()
          return;
         }
       
-      // Get ML model decision
+      // Debug: Print features for verification
+      PrintModelFeatures(features);
+      
+      // Get ML model decision WITH COMPLETE TRADE DATA
       string trade_id;
       double probability;
-      bool model_approved = GetModelDecision(features, trade_id, probability);
+      bool model_approved = GetModelDecision(features, trade_id, probability,
+                                             curr_ask_price, stopLoss, takeProfit, atrValue[0]);
       
       if(!model_approved)
         {
@@ -914,9 +1014,6 @@ void OnTick()
         }
       
       Print("ML Model approved BUY trade. Probability: ", probability);
-      
-      double stopLoss   = NormalizeDouble(upperBreakout - (atrValue[0] * SL_ATR_Multiplier), _Digits);
-      double takeProfit = NormalizeDouble(upperBreakout + (atrValue[0] * TP_ATR_Multiplier), _Digits);
 
       if(m_trade.Buy(LotSize, _Symbol, 0.0, stopLoss, takeProfit, m_comment))
         {
@@ -937,6 +1034,10 @@ void OnTick()
 // ✅ SELL condition with ML model confirmation
    if(curr_bid_price < lowerBreakout && allow_sell_trade)
      {
+      // Calculate SL/TP BEFORE feature calculation (needed for GetModelDecision)
+      double stopLoss   = NormalizeDouble(lowerBreakout + (atrValue[0] * SL_ATR_Multiplier), _Digits);
+      double takeProfit = NormalizeDouble(lowerBreakout - (atrValue[0] * TP_ATR_Multiplier), _Digits);
+      
       // Calculate features for SELL action
       double features[];
       if(!CalculateModelFeatures(0, features)) // 0 = SELL
@@ -945,10 +1046,14 @@ void OnTick()
          return;
         }
       
-      // Get ML model decision
+      // Debug: Print features for verification
+      PrintModelFeatures(features);
+      
+      // Get ML model decision WITH COMPLETE TRADE DATA
       string trade_id;
       double probability;
-      bool model_approved = GetModelDecision(features, trade_id, probability);
+      bool model_approved = GetModelDecision(features, trade_id, probability,
+                                             curr_bid_price, stopLoss, takeProfit, atrValue[0]);
       
       if(!model_approved)
         {
@@ -958,9 +1063,6 @@ void OnTick()
         }
       
       Print("ML Model approved SELL trade. Probability: ", probability);
-      
-      double stopLoss   = NormalizeDouble(lowerBreakout + (atrValue[0] * SL_ATR_Multiplier), _Digits);
-      double takeProfit = NormalizeDouble(lowerBreakout - (atrValue[0] * TP_ATR_Multiplier), _Digits);
 
       if(m_trade.Sell(LotSize, _Symbol, 0.0, stopLoss, takeProfit, m_comment))
         {

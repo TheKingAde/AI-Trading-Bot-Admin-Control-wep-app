@@ -132,6 +132,17 @@ async def entry_decision():
         if payload is None:
             return jsonify({"error": "Expected JSON body"}), 400
 
+        # Extract model features only (21 features) for prediction
+        model_features_names = [
+            'Symbol', 'Action', 'ATR_rel', 'EMA_diff', 'RSI14', 'Range_Ratio',
+            'Pct_from_30h', 'Pct_from_30l', 'Breakout_level_atr_multiplier',
+            'SL_ATR_Mult', 'TP_ATR_Mult', 'Use_BE', 'Risk_Reward_Ratio',
+            'High_Volatility', 'Day_of_Week', 'Consecutive_Bullish',
+            'Consecutive_Bearish', 'Avg_Body_Size', 'Avg_Range',
+            'Trend_Score', 'Momentum_Strength'
+        ]
+        
+        # Build feature DataFrame for model prediction
         df = _build_feature_df(payload)
         Xs = app.scaler.transform(df)
         proba = float(app.model.predict_proba(Xs)[0, 1])
@@ -139,57 +150,70 @@ async def entry_decision():
         enter = 1 if proba >= thr else 0
         confidence = max(0.0, min(1.0, abs(proba - thr) * 2.0))
 
-        # ===================== Save features to DB =====================
+        # ===================== Save COMPLETE trade data to DB =====================
         # Generate a unique Trade_ID for this request
         trade_id = str(uuid.uuid4())
-        # Get all columns in trades_dataset
+        
         db_path = str(ROOT_DIR / 'data' / 'training_data.db')
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
+        
+        # Get all columns in trades_dataset
         cursor.execute(f"PRAGMA table_info(trades_dataset)")
-        columns = [row[1] for row in cursor.fetchall()]
-        # Build row dict
-        row = {col: None for col in columns}
-        # Fill in features
-        for i, feat in enumerate(app.features):
-            val = df.iloc[0][feat]
-            row[feat] = val
-        # Fill in Trade_ID
-        if 'Trade_ID' in row:
+        db_columns = [row[1] for row in cursor.fetchall()]
+        
+        # Build complete row with ALL 30 fields
+        row = {}
+        
+        # 1. Time (if provided, else use current)
+        row['Time'] = payload.get('Time', datetime.utcnow().isoformat())
+        
+        # 2-26: The 21 model features + 4 trade context fields (Entry, SL, TP, ATR)
+        for col in db_columns:
+            if col in payload:
+                row[col] = payload[col]
+            elif col == 'Trade_ID':
+                continue  # Handle separately
+            elif col in ['Exit_Price', 'Profitable', 'Final_PnL', 'Outcome_Category']:
+                row[col] = None  # Will be filled on trade close
+            else:
+                row[col] = None  # Default NULL for any missing fields
+        
+        # Add Trade_ID (not from payload)
+        if 'Trade_ID' in db_columns:
             row['Trade_ID'] = trade_id
-        # Fill in Time
-        if 'Time' in row:
-            from datetime import datetime
-            row['Time'] = datetime.utcnow().isoformat()
-        # Profitable, Final_PnL, Outcome_Category left as None/NULL
-        # Any other columns (e.g., EA-specific) can be filled from payload if present
-        for k in payload:
-            if k in row and k not in app.features:
-                row[k] = payload[k]
-        # Prepare insert
-        col_names = ','.join(row.keys())
-        placeholders = ','.join(['?' for _ in row])
-        values = [row[k] for k in row]
+        
+        # Prepare INSERT statement
+        columns_to_insert = [k for k in row.keys() if k in db_columns]
+        col_names = ','.join(columns_to_insert)
+        placeholders = ','.join(['?' for _ in columns_to_insert])
+        values = [row[k] for k in columns_to_insert]
+        
+        # Execute insert
         cursor.execute(f"INSERT INTO trades_dataset ({col_names}) VALUES ({placeholders})", values)
         conn.commit()
         conn.close()
+        
+        print(f"✅ Saved trade entry to DB: trade_id={trade_id}, enter={enter}, probability={proba:.4f}")
 
         return jsonify({
             "enter": enter,            # 1=ENTER, 0=STAY OUT
             "probability": round(proba, 6),
             "confidence": round(confidence, 6),
-            "threshold": thr
-            ,"trade_id": trade_id
+            "threshold": thr,
+            "trade_id": trade_id
         })
     except ValueError as ve:
         return jsonify({"error": str(ve)}), 400
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": f"Prediction failed: {e}"}), 500
 
 
 # ===================== Update trade outcome after close =====================
 # POST /api/entry-update
-# Body: { "trade_id": ..., "Profitable": 1/0, "Final_PnL": float, "Outcome_Category": "Win"/"Loss" }
+# Body: { "trade_id": ..., "Exit_Price": ..., "Profitable": 1/0, "Final_PnL": float, "Outcome_Category": "Win"/"Loss" }
 # Updates the row with matching Trade_ID
 @app.post('/api/entry-update')
 async def entry_update():
@@ -200,11 +224,13 @@ async def entry_update():
         trade_id = payload.get('trade_id')
         if not trade_id:
             return jsonify({"error": "Missing trade_id"}), 400
-        # Only allow updating certain fields
-        allowed = ['Profitable', 'Final_PnL', 'Outcome_Category']
+        
+        # Allow updating outcome fields
+        allowed = ['Exit_Price', 'Profitable', 'Final_PnL', 'Outcome_Category']
         updates = {k: payload[k] for k in allowed if k in payload}
         if not updates:
             return jsonify({"error": "No updatable fields provided"}), 400
+        
         db_path = str(ROOT_DIR / 'data' / 'training_data.db')
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
@@ -214,10 +240,15 @@ async def entry_update():
         conn.commit()
         affected = cursor.rowcount
         conn.close()
+        
         if affected == 0:
             return jsonify({"error": "Trade_ID not found"}), 404
+        
+        print(f"✅ Updated trade outcome: trade_id={trade_id}, updates={updates}")
         return jsonify({"updated": affected, "trade_id": trade_id})
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": f"Update failed: {e}"}), 500
 
 
