@@ -9,7 +9,7 @@ from typing import List, Tuple
 # --- Configuration defaults ---
 DEFAULT_DB_PATH = Path('data') / 'training_data.db'
 DEFAULT_TABLE = 'trades_dataset'
-DEFAULT_CSV = Path('cleaned_merged.csv')
+DEFAULT_CSV = Path('training_data_0.1_0.4_2015_2025_10_14.csv')
 BATCH_SIZE = 1000
 
 # --- Only keep these columns ---
@@ -20,7 +20,7 @@ TARGET_COLUMNS = [
     "SL_ATR_Mult", "TP_ATR_Mult", "Use_BE", "Risk_Reward_Ratio",
     "High_Volatility", "Day_of_Week", "Consecutive_Bullish",
     "Consecutive_Bearish", "Avg_Body_Size", "Avg_Range",
-    "Trend_Score", "Momentum_Strength", "Final_PnL", "Outcome_Category"
+    "Trend_Score", "Momentum_Strength", "Profitable", "Final_PnL", "Outcome_Category"
 ]
 
 
@@ -52,11 +52,34 @@ def create_indexes(conn: sqlite3.Connection, table: str, columns: List[str]) -> 
 
 def import_csv_to_sqlite(csv_path: Path, db_path: Path, table: str) -> Tuple[int, List[str]]:
     ensure_db_dir(db_path)
-    with csv_path.open('r', encoding='utf-8-sig', newline='') as f:
+    
+    # Try multiple encodings
+    encodings_to_try = ['utf-8-sig', 'utf-8', 'utf-16', 'utf-16-le', 'utf-16-be', 'latin-1', 'cp1252']
+    last_error = None
+    
+    for encoding in encodings_to_try:
+        try:
+            with csv_path.open('r', encoding=encoding, newline='') as f:
+                reader = csv.DictReader(f, delimiter=';')
+                # Normalize fieldnames
+                field_map = {h.strip(): h.strip() for h in reader.fieldnames or []}
+                # Keep only target columns that exist
+                keep_cols = [c for c in TARGET_COLUMNS if c in field_map]
+                
+                # If we successfully read fieldnames, continue with this encoding
+                print(f"Successfully opened file with encoding: {encoding}")
+                break
+        except (UnicodeDecodeError, UnicodeError) as e:
+            last_error = e
+            continue
+    else:
+        # If all encodings failed
+        raise ValueError(f"Could not decode CSV file with any supported encoding. Last error: {last_error}")
+    
+    # Now process the file with the working encoding
+    with csv_path.open('r', encoding=encoding, newline='') as f:
         reader = csv.DictReader(f, delimiter=';')
-        # Normalize fieldnames
         field_map = {h.strip(): h.strip() for h in reader.fieldnames or []}
-        # Keep only target columns that exist
         keep_cols = [c for c in TARGET_COLUMNS if c in field_map]
 
         sanitized = [sanitize_column_name(c) for c in keep_cols]

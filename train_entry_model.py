@@ -73,10 +73,10 @@ LGBM_PARAMS = {
 # When True, we scan thresholds to pick one that meets a target precision (win rate)
 # and a minimum trade frequency. This selected threshold is saved into the model file
 # and used for test-set classification metrics below.
-ENABLE_AUTO_THRESHOLD = False   # Set to True to enable auto-tuning
+ENABLE_AUTO_THRESHOLD = True   # Set to True to enable auto-tuning
 THRESHOLD_TARGET_PRECISION = 0.50  # e.g., 0.50 = 50% win rate target
 THRESHOLD_MIN_TRADE_FREQ   = 0.05  # e.g., 0.05 = at least 5% of samples become ENTER
-THRESHOLD_SCAN_START = 0.35
+THRESHOLD_SCAN_START = 0.05   # widen scan downwards so low-calibrated models can still trigger ENTER
 THRESHOLD_SCAN_STOP  = 0.90
 THRESHOLD_SCAN_STEP  = 0.01
 
@@ -283,6 +283,56 @@ model.fit(
 
 print(f"✅ Training complete | Best iteration: {model.best_iteration_} | Best score: {model.best_score_['valid_0']['auc']:.4f}")
 
+# ======================== Smart Retrain Detection ========================
+# Check if model has very low confidence (poor calibration)
+y_val_pred_proba_initial = model.predict_proba(X_val_scaled)[:, 1]
+max_val_prob = float(np.max(y_val_pred_proba_initial))
+median_val_prob = float(np.median(y_val_pred_proba_initial))
+
+# If max probability < 0.35 OR median < 0.20, model is under-confident on positive class
+# This typically means it needs stronger positive class weighting
+RETRAIN_THRESHOLD_MAX = 0.35
+RETRAIN_THRESHOLD_MEDIAN = 0.20
+
+if max_val_prob < RETRAIN_THRESHOLD_MAX or median_val_prob < RETRAIN_THRESHOLD_MEDIAN:
+    print(f"\n⚠️  MODEL UNDER-CONFIDENCE DETECTED")
+    print(f"   Validation probabilities: max={max_val_prob:.3f}, median={median_val_prob:.3f}")
+    print(f"   Triggering RETRAIN with stronger positive class weighting...")
+    
+    # Increase scale_pos_weight significantly to force model to predict more wins
+    boosted_scale_pos = scale_pos * 2.5  # 2.5x boost (e.g., 5.08 → 12.7)
+    print(f"   New scale_pos_weight: {boosted_scale_pos:.2f} (was {scale_pos:.2f})")
+    
+    model = lgb.LGBMClassifier(
+        objective='binary',
+        metric='auc',
+        boosting_type=LGBM_PARAMS['boosting_type'],
+        num_leaves=LGBM_PARAMS['num_leaves'],
+        max_depth=LGBM_PARAMS['max_depth'],
+        learning_rate=LGBM_PARAMS['learning_rate'],
+        n_estimators=LGBM_PARAMS['n_estimators'],
+        feature_fraction=LGBM_PARAMS['feature_fraction'],
+        bagging_fraction=LGBM_PARAMS['bagging_fraction'],
+        bagging_freq=LGBM_PARAMS['bagging_freq'],
+        min_child_samples=LGBM_PARAMS['min_child_samples'],
+        scale_pos_weight=boosted_scale_pos,  # BOOSTED weight
+        reg_alpha=LGBM_PARAMS['reg_alpha'],
+        reg_lambda=LGBM_PARAMS['reg_lambda'],
+        verbose=-1,
+        random_state=LGBM_PARAMS['random_state']
+    )
+    
+    model.fit(
+        X_train_scaled, y_train,
+        eval_set=[(X_val_scaled, y_val)],
+        eval_metric='auc',
+        callbacks=[lgb.early_stopping(stopping_rounds=50, verbose=False)]
+    )
+    
+    print(f"   ✅ RETRAIN complete | Best iteration: {model.best_iteration_} | Best score: {model.best_score_['valid_0']['auc']:.4f}")
+else:
+    print(f"   Model confidence acceptable (max={max_val_prob:.3f}, median={median_val_prob:.3f})")
+
 # ======================== Validation Metrics ========================
 print(f"\n{'=' * 80}")
 print(f"VALIDATION SET PERFORMANCE")
@@ -290,6 +340,12 @@ print(f"{'=' * 80}")
 
 y_val_pred_proba = model.predict_proba(X_val_scaled)[:, 1]
 y_val_pred = (y_val_pred_proba >= 0.5).astype(int)
+
+# Probability diagnostics (helps understand calibration and thresholding)
+print("\nValidation probability diagnostics:")
+print(f"  min={float(np.min(y_val_pred_proba)):.3f} | p10={float(np.quantile(y_val_pred_proba, 0.10)):.3f} | "
+    f"median={float(np.median(y_val_pred_proba)):.3f} | p90={float(np.quantile(y_val_pred_proba, 0.90)):.3f} | "
+    f"max={float(np.max(y_val_pred_proba)):.3f}")
 
 val_acc = accuracy_score(y_val, y_val_pred)
 val_prec = precision_score(y_val, y_val_pred, zero_division=0)
@@ -356,8 +412,14 @@ if ENABLE_AUTO_THRESHOLD:
         print(f"\n⚠️  Falling back to threshold {chosen_threshold:.2f} (>=40% precision):")
         print(f"   Precision: {fallback_40['precision']:.1%} | Recall: {fallback_40['recall']:.1%} | F1: {fallback_40['f1']:.4f} | Trade %: {fallback_40['trade_freq']:.1%}")
     else:
-        chosen_threshold = float(best_f1[1])
-        print(f"\n❌ No threshold met precision targets. Using max-F1 threshold {chosen_threshold:.2f} as last resort.")
+        # If nothing met targets, use a quantile-based threshold to guarantee at least
+        # THRESHOLD_MIN_TRADE_FREQ trade rate on validation. This avoids degenerate
+        # "always STAY OUT" behavior on low-calibrated models.
+        q = max(0.0, 1.0 - THRESHOLD_MIN_TRADE_FREQ)
+        quant_thr = float(np.quantile(y_val_pred_proba, q))
+        chosen_threshold = quant_thr
+        print(f"\n⚠️  No threshold met targets. Using {int(THRESHOLD_MIN_TRADE_FREQ*100)}th-percentile threshold: {chosen_threshold:.3f} "
+              f"(~{THRESHOLD_MIN_TRADE_FREQ:.0%} trade rate target).")
 
 print(f"\nUsing classification threshold: {chosen_threshold:.2f} (set ENABLE_AUTO_THRESHOLD=True to auto-tune)")
 
