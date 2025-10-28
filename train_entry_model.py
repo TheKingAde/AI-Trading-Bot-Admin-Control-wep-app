@@ -43,8 +43,8 @@ print("Learning from REAL trade outcomes—no synthetic rules")
 print("=" * 80)
 
 # ======================== Configuration ========================
-DB_PATH = Path('data/training_data.db')
-TABLE_NAME = 'training_data'
+DB_PATH = Path('data/feature_subset.db')
+TABLE_NAME = 'feature_data'
 MODEL_OUTPUT = 'entry_decision_model.pkl'
 
 # ======================== Training/Tuning Config (EDIT HERE) ========================
@@ -92,13 +92,8 @@ THRESHOLD_SCAN_STEP  = 0.01
 
 # Features for prediction (21 features - EXCLUDE target variables)
 INPUT_FEATURES = [
-    'Symbol',
     'Action',
     'Hour_of_Day',
-    'Is_NY_Session',
-    'Is_Asian_Session',
-    'Is_London_Session',
-    'Breakout_Strength',
 ]
 
 TARGET = 'Win'  # Binary: 1=Win, 0=Loss
@@ -513,9 +508,7 @@ for i, idx in enumerate(sample_idx):
     # Show key feature values
     sample = X_test.iloc[idx]
     print(
-        f"  Breakout_Strength={sample['Breakout_Strength']:.6f}, "
         f"Hour={int(sample['Hour_of_Day'])}, "
-        f"NY={int(sample['Is_NY_Session'])}, London={int(sample['Is_London_Session'])}, Asian={int(sample['Is_Asian_Session'])}"
     )
 
 # ======================== Save Model ========================
