@@ -1,14 +1,24 @@
 """
-ENTRY DECISION BINARY CLASSIFIER - Production Grade
-====================================================
-Single objective: Predict whether to ENTER a trade or STAY OUT
+ENTRY DECISION BINARY CLASSIFIER - Candlestick Breakout Regime
+==============================================================
+Objective: Predict whether a trade will Win (1) or Lose (0) at breakout time
 
-Uses REAL outcomes from historical trades (Profitable=1/0 label)
-NO synthetic scoring—the model learns directly from market reality
+Uses REAL outcomes from historical trades (Win=1/0).
+Focuses on session/time and breakout strength features aligned to the breakout event.
 
-Features: 21 market context indicators
-Target: Profitable (1=Win, 0=Loss)
-Output: Binary decision with confidence score
+Features (7):
+    - Symbol (encoded)
+    - Action (encoded)
+    - Hour_of_Day
+    - Is_NY_Session
+    - Is_Asian_Session
+    - Is_London_Session
+    - Breakout_Strength
+
+Target:
+    - Win (1=Win, 0=Loss)
+
+Output: Binary decision with probability and saved threshold for deployment.
 """
 
 import pandas as pd
@@ -27,14 +37,14 @@ from pathlib import Path
 warnings.filterwarnings('ignore')
 
 print("=" * 80)
-print("PRODUCTION-GRADE ENTRY DECISION CLASSIFIER")
-print("Objective: ENTER vs STAY OUT (Binary Classification)")
-print("Learning from REAL trade outcomes—NO synthetic rules")
+print("PRODUCTION-GRADE ENTRY DECISION CLASSIFIER (Breakout Regime)")
+print("Objective: Predict Win vs Loss from session/time + breakout strength")
+print("Learning from REAL trade outcomes—no synthetic rules")
 print("=" * 80)
 
 # ======================== Configuration ========================
 DB_PATH = Path('data/training_data.db')
-TABLE_NAME = 'trades_dataset'
+TABLE_NAME = 'training_data'
 MODEL_OUTPUT = 'entry_decision_model.pkl'
 
 # ======================== Training/Tuning Config (EDIT HERE) ========================
@@ -82,15 +92,16 @@ THRESHOLD_SCAN_STEP  = 0.01
 
 # Features for prediction (21 features - EXCLUDE target variables)
 INPUT_FEATURES = [
-    'Symbol', 'Action', 'ATR_rel', 'EMA_diff', 'RSI14', 'Range_Ratio',
-    'Pct_from_30h', 'Pct_from_30l', 'Breakout_level_atr_multiplier',
-    'SL_ATR_Mult', 'TP_ATR_Mult', 'Use_BE', 'Risk_Reward_Ratio',
-    'High_Volatility', 'Day_of_Week', 'Consecutive_Bullish',
-    'Consecutive_Bearish', 'Avg_Body_Size', 'Avg_Range',
-    'Trend_Score', 'Momentum_Strength'
+    'Symbol',
+    'Action',
+    'Hour_of_Day',
+    'Is_NY_Session',
+    'Is_Asian_Session',
+    'Is_London_Session',
+    'Breakout_Strength',
 ]
 
-TARGET = 'Profitable'  # Binary: 1=Win, 0=Loss
+TARGET = 'Win'  # Binary: 1=Win, 0=Loss
 
 # ======================== Load Data ========================
 print(f"\n📂 Loading training data from SQLite database...")
@@ -107,11 +118,11 @@ conn.close()
 print(f"✅ Loaded {len(df):,} rows × {len(df.columns)} columns")
 
 
-# Sort chronologically for time-series split
-if 'Time' in df.columns:
-    df['Time'] = pd.to_datetime(df['Time'], errors='coerce')
-    df = df.sort_values('Time').reset_index(drop=True)
-    print("✅ Data sorted chronologically")
+# Sort chronologically for time-series split (by Trade_Time if available)
+if 'Trade_Time' in df.columns:
+    df['Trade_Time'] = pd.to_datetime(df['Trade_Time'], errors='coerce')
+    df = df.sort_values('Trade_Time').reset_index(drop=True)
+    print("✅ Data sorted chronologically by Trade_Time")
 
 # ======================== Validate Schema ========================
 print(f"\n🔍 Validating required columns...")
@@ -135,24 +146,22 @@ print(f"\n🔧 Preparing features and target...")
 print(f"🔄 Converting string columns to proper numeric types...")
 
 # Columns that should be numeric (all features except categorical ones)
-numeric_cols = [col for col in INPUT_FEATURES if col not in ['Symbol', 'Action', 'Use_BE']]
+numeric_cols = [col for col in INPUT_FEATURES if col not in ['Symbol', 'Action']]
 
 for col in numeric_cols:
     if col in df.columns:
         # Convert to numeric, coercing errors to NaN
         df[col] = pd.to_numeric(df[col], errors='coerce')
 
-# Convert target column with fallback to Outcome_Category
+# Convert target column with fallback to Outcome (string)
 if TARGET in df.columns:
     df[TARGET] = pd.to_numeric(df[TARGET], errors='coerce')
-    
-    # If Profitable is all NaN or all zeros, try to derive from Outcome_Category
-    if df[TARGET].isna().all() or (df[TARGET] == 0).all():
-        print(f"⚠️  Profitable column is empty/invalid, using Outcome_Category as fallback...")
-        if 'Outcome_Category' in df.columns:
-            # Map Outcome_Category: "Win" -> 1, anything else -> 0
-            df[TARGET] = df['Outcome_Category'].apply(lambda x: 1 if str(x).lower() == 'win' else 0)
-            print(f"✅ Derived Profitable from Outcome_Category")
+    # If Win is NaN or missing, derive from Outcome text
+    if df[TARGET].isna().all():
+        if 'Outcome' in df.columns:
+            print(f"⚠️  Win column empty/invalid, deriving from Outcome string...")
+            df[TARGET] = df['Outcome'].apply(lambda x: 1 if str(x).lower() == 'win' else 0)
+            print(f"✅ Derived Win from Outcome")
 
 print(f"✅ Type conversions complete")
 
@@ -175,7 +184,7 @@ if (y == 1).sum() == 0 or (y == 0).sum() == 0:
 
 # Encode categorical features
 categorical_features = []
-for col in ['Symbol', 'Action', 'Use_BE']:
+for col in ['Symbol', 'Action']:
     if col in X.columns:
         if X[col].dtype == 'object' or X[col].dtype == 'bool':
             X[col] = pd.Categorical(X[col]).codes
@@ -202,8 +211,8 @@ print(f"\n✅ Feature matrix: {X.shape[0]:,} samples × {X.shape[1]} features")
 print(f"✅ Target vector: {len(y):,} labels (binary: 0/1)")
 
 # Show feature summary statistics
-print(f"\n📈 Feature Summary Statistics (first 10):")
-print(X.describe().iloc[:, :10].T[['mean', 'std', 'min', 'max']])
+print(f"\n📈 Feature Summary Statistics:")
+print(X.describe().T[['mean', 'std', 'min', 'max']])
 
 
 # ======================== Time-Based Train/Val/Test Split ========================
@@ -477,8 +486,8 @@ importance_df = pd.DataFrame({
     'Importance': model.feature_importances_
 }).sort_values('Importance', ascending=False)
 
-print(f"\nTop 15 Most Important Features:")
-for i, row in importance_df.head(15).iterrows():
+print(f"\nTop Features:")
+for i, row in importance_df.iterrows():
     bar_len = int(row['Importance'] / importance_df['Importance'].max() * 40)
     bar = '█' * bar_len
     print(f"  {row['Feature']:30s} | {bar} {row['Importance']:7.1f}")
@@ -501,11 +510,13 @@ for i, idx in enumerate(sample_idx):
     correct = "✓" if pred == actual else "✗"
     
     print(f"\nSample {i+1}: {decision} @ {proba:.1%} confidence | Actual: {actual_outcome} {correct}")
-    
     # Show key feature values
     sample = X_test.iloc[idx]
-    print(f"  RSI14={sample['RSI14']:.1f}, EMA_diff={sample['EMA_diff']:.5f}, "
-          f"Range_Ratio={sample['Range_Ratio']:.2f}, RR={sample['Risk_Reward_Ratio']:.2f}")
+    print(
+        f"  Breakout_Strength={sample['Breakout_Strength']:.6f}, "
+        f"Hour={int(sample['Hour_of_Day'])}, "
+        f"NY={int(sample['Is_NY_Session'])}, London={int(sample['Is_London_Session'])}, Asian={int(sample['Is_Asian_Session'])}"
+    )
 
 # ======================== Save Model ========================
 print(f"\n{'=' * 80}")
@@ -551,49 +562,51 @@ print(f"   Test AUC: {test_auc:.4f}")
 print(f"   Test Precision: {test_prec:.4f} (live win rate estimate)")
 
 # ======================== DLL-Ready Prediction Function ========================
-def predict_entry(symbol, action, atr_rel, ema_diff, rsi14, range_ratio,
-                  pct_from_30h, pct_from_30l, breakout_atr_mult,
-                  sl_atr_mult, tp_atr_mult, use_be, risk_reward_ratio,
-                  high_volatility, day_of_week, consecutive_bullish,
-                  consecutive_bearish, avg_body_size, avg_range,
-                  trend_score, momentum_strength):
+def predict_entry(symbol,
+                  action,
+                  hour_of_day,
+                  is_ny_session,
+                  is_asian_session,
+                  is_london_session,
+                  breakout_strength):
     """
-    Production-ready prediction function for live trading.
-    
-    Args:
-        21 feature parameters matching INPUT_FEATURES order
-    
+    Production-ready prediction function for live trading (breakout regime model).
+
+    Args (must match INPUT_FEATURES order exactly):
+        symbol (int): encoded symbol ID (same encoding as training)
+        action (int): encoded action ID (e.g., 0=SELL, 1=BUY) or as trained
+        hour_of_day (int)
+        is_ny_session (int 0/1)
+        is_asian_session (int 0/1)
+        is_london_session (int 0/1)
+        breakout_strength (float)
+
     Returns:
         tuple: (should_enter: bool, confidence: float, probability: float)
-            - should_enter: True = Enter trade, False = Stay out
-            - confidence: 0-1 how confident (distance from threshold)
-            - probability: Raw model probability of winning
     """
     model_data = joblib.load(MODEL_OUTPUT)
     clf = model_data['model']
     scaler = model_data['scaler']
-    
-    # Build feature vector (must match training order exactly)
+
+    # Build feature vector (ensure numeric types)
     feature_vec = np.array([[
-        symbol if isinstance(symbol, (int, float)) else 0,  # Encoded
-        action if isinstance(action, (int, float)) else 0,  # Encoded
-        atr_rel, ema_diff, rsi14, range_ratio,
-        pct_from_30h, pct_from_30l, breakout_atr_mult,
-        sl_atr_mult, tp_atr_mult,
-        1 if use_be else 0,
-        risk_reward_ratio, high_volatility, day_of_week,
-        consecutive_bullish, consecutive_bearish,
-        avg_body_size, avg_range, trend_score, momentum_strength
+        symbol if isinstance(symbol, (int, float)) else 0,
+        action if isinstance(action, (int, float)) else 0,
+        int(hour_of_day),
+        int(is_ny_session),
+        int(is_asian_session),
+        int(is_london_session),
+        float(breakout_strength),
     ]])
-    
+
     # Scale and predict
     feature_scaled = scaler.transform(feature_vec)
     probability = clf.predict_proba(feature_scaled)[0, 1]
-    
+
     threshold = model_data['threshold']
     should_enter = probability >= threshold
     confidence = abs(probability - threshold) * 2  # 0-1 scale
-    
+
     return should_enter, confidence, probability
 
 print(f"\n{'=' * 80}")
