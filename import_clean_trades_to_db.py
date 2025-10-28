@@ -208,7 +208,7 @@ def insert_rows(conn: sqlite3.Connection, table: str, rows: List[Dict[str, Any]]
 
 def main():
     parser = argparse.ArgumentParser(description="Import clean trades CSV into SQLite database.")
-    parser.add_argument("--csv", dest="csv_path", default="1-training_data.csv", help="Path to input CSV (semicolon-delimited)")
+    parser.add_argument("--csv", dest="csv_path", default="clean_trades.csv", help="Path to input CSV (semicolon-delimited)")
     parser.add_argument("--db", dest="db_path", default=os.path.join("data", "training_data.db"), help="Path to SQLite database file")
     parser.add_argument("--table", dest="table", default="clean_trades", help="Destination table name")
     parser.add_argument("--encoding", dest="encoding", default="utf-16", help="File text encoding (e.g., utf-16, utf-8, utf-8-sig)")

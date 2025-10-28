@@ -29,8 +29,8 @@ print("Investigating why the model can't predict wins")
 print("=" * 80)
 
 parser = argparse.ArgumentParser(description="Diagnose features vs target in training database")
-parser.add_argument("--db", default=str(Path('data') / 'training_data.db'), help="Path to SQLite DB")
-parser.add_argument("--table", default='training_data', help="Table name containing training rows")
+parser.add_argument("--db", default=str(Path('data') / 'feature_subset.db'), help="Path to SQLite DB")
+parser.add_argument("--table", default='feature_data', help="Table name containing training rows")
 parser.add_argument("--target", default='Win', help="Target column: Win (default) or Profitable")
 args, _ = parser.parse_known_args()
 

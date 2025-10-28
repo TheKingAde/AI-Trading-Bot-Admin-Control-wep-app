@@ -1,40 +1,89 @@
-import csv
+import sqlite3
+import os
+import argparse
 
-def write_clean_trade_header(filename="clean_trades1.csv"):
-    with open(filename, mode="w", newline='', encoding="utf-8") as file:
-        writer = csv.writer(file, delimiter=';')
+# Columns you want to export
+SELECTED_COLUMNS = [
+    "Trade_Time",
+    "Symbol",
+    "Action",
+    "Hour_of_Day",
+    "Is_NY_Session",
+    "Is_Asian_Session",
+    "Is_London_Session",
+    "Breakout_Strength",
+    "Win",
+    "Profit",
+    "Profit_Pct",
+    "Outcome",
+]
 
-        header = []
+def ensure_db_dir(db_path: str):
+    """Create folder for database if it doesn’t exist."""
+    db_dir = os.path.dirname(db_path)
+    if db_dir and not os.path.exists(db_dir):
+        os.makedirs(db_dir, exist_ok=True)
 
-        # === TRADE IDENTIFICATION ===
-        header += ["Trade_Time", "Symbol", "Action"]
+def build_create_sql(table_name: str) -> str:
+    """Generate SQL for creating the export table."""
+    columns_def = []
+    for col in SELECTED_COLUMNS:
+        if col.startswith("Is_"):
+            col_type = "INTEGER"
+        elif col in ["Hour_of_Day"]:
+            col_type = "REAL"
+        elif col in ["Action"]:
+            col_type = "TEXT"
+        else:
+            col_type = "REAL"
+        columns_def.append(f'"{col}" {col_type}')
+    columns_def.insert(0, "id INTEGER PRIMARY KEY AUTOINCREMENT")
+    return f"CREATE TABLE IF NOT EXISTS {table_name} ({', '.join(columns_def)});"
 
-        # === TRADE EXECUTION ===
-        header += ["Entry", "Exit_Price", "SL", "TP"]
+def export_data(source_db: str, dest_db: str, source_table: str, dest_table: str):
+    """Copy selected columns from source database to new database."""
+    ensure_db_dir(dest_db)
 
-        # === BREAKOUT QUALITY ===
-        header += ["Breakout_Strength"]
+    src_conn = sqlite3.connect(source_db)
+    dst_conn = sqlite3.connect(dest_db)
 
-        # === BREAKOUT TIME & SESSION ===
-        header += [
-            "Hour_of_Day", "Day_of_Week",
-            "Is_London_Session", "Is_NY_Session", "Is_Asian_Session"
-        ]
+    try:
+        # Check if all columns exist in the source table
+        cursor = src_conn.execute(f"PRAGMA table_info({source_table});")
+        available_cols = [row[1] for row in cursor.fetchall()]
+        missing = [col for col in SELECTED_COLUMNS if col not in available_cols]
+        if missing:
+            raise ValueError(f"Missing columns in source table: {missing}")
 
-        # === 7 H1 CANDLES BEFORE BREAKOUT ===
-        for i in range(1, 8):
-            header += [
-                f"C{i}_Open", f"C{i}_High", f"C{i}_Low", f"C{i}_Close",
-                f"C{i}_BodyPts", f"C{i}_UpperWickPts", f"C{i}_LowerWickPts"
-            ]
+        # Create destination table
+        dst_conn.execute(build_create_sql(dest_table))
+        dst_conn.commit()
 
-        # === OUTCOMES ===
-        header += ["Win", "Profit", "Profit_Pct", "Outcome"]
+        # Export data
+        col_str = ", ".join(SELECTED_COLUMNS)
+        src_cursor = src_conn.execute(f"SELECT {col_str} FROM {source_table};")
+        rows = src_cursor.fetchall()
 
-        # Write to file
-        writer.writerow(header)
+        placeholders = ", ".join(["?"] * len(SELECTED_COLUMNS))
+        insert_sql = f"INSERT INTO {dest_table} ({col_str}) VALUES ({placeholders});"
+        dst_conn.executemany(insert_sql, rows)
+        dst_conn.commit()
 
-    print(f"✅ Header written successfully to {filename}")
+        print(f"✅ Exported {len(rows)} rows from '{source_db}::{source_table}' to '{dest_db}::{dest_table}'")
+
+    finally:
+        src_conn.close()
+        dst_conn.close()
+
+def main():
+    parser = argparse.ArgumentParser(description="Export selected columns from one SQLite DB to another.")
+    parser.add_argument("--source-db", default="data/training_data.db", help="Path to source SQLite database.")
+    parser.add_argument("--source-table", default="clean_trades", help="Table name in source DB.")
+    parser.add_argument("--dest-db", default="data/feature_subset.db", help="Path for new database.")
+    parser.add_argument("--dest-table", default="feature_data", help="Table name in new DB.")
+    args = parser.parse_args()
+
+    export_data(args.source_db, args.dest_db, args.source_table, args.dest_table)
 
 if __name__ == "__main__":
-    write_clean_trade_header()
+    main()
