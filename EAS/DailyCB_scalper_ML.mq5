@@ -20,9 +20,6 @@ input int magic_number = 307037; // Magic number
 CTrade m_trade;
 CPositionInfo m_position;
 int atrHandle;
-int ema20Handle;   // EMA 20 (not 200!)
-int ema50Handle;   // EMA 50
-int rsiHandle;
 double atrValue[];
 bool allow_buy_trade = true;
 bool allow_sell_trade = true;
@@ -506,7 +503,7 @@ int OnInit()
      }
 
    Print("DailyCB initialized successfully with ML model integration.");
-   EventSetTimer(30);
+   EventSetTimer(60 * 60);
    return(INIT_SUCCEEDED);
   }
 
@@ -527,12 +524,6 @@ void OnDeinit(const int reason)
    SendTelegramMessage(message);
    if(atrHandle != INVALID_HANDLE)
       IndicatorRelease(atrHandle);
-   if(ema20Handle != INVALID_HANDLE)
-      IndicatorRelease(ema20Handle);
-   if(ema50Handle != INVALID_HANDLE)
-      IndicatorRelease(ema50Handle);
-   if(rsiHandle != INVALID_HANDLE)
-      IndicatorRelease(rsiHandle);
   }
 
 //+------------------------------------------------------------------+
@@ -765,7 +756,6 @@ void OnTick()
       if(!CalculateModelFeatures(1, features)) // 1 = BUY
         {
          Print("Failed to calculate features for BUY");
-         return;
         }
 
       // Debug: Print features for verification
@@ -780,8 +770,6 @@ void OnTick()
       if(!model_approved)
         {
          Print("ML Model rejected BUY trade. Probability: ", probability);
-         allow_buy_trade = false; // Prevent retry on same breakout
-         return;
         }
 
       Print("ML Model approved BUY trade. Probability: ", probability);
@@ -814,7 +802,6 @@ void OnTick()
       if(!CalculateModelFeatures(0, features)) // 0 = SELL
         {
          Print("Failed to calculate features for SELL");
-         return;
         }
 
       // Debug: Print features for verification
@@ -829,8 +816,6 @@ void OnTick()
       if(!model_approved)
         {
          Print("ML Model rejected SELL trade. Probability: ", probability);
-         allow_sell_trade = false; // Prevent retry on same breakout
-         return;
         }
 
       Print("ML Model approved SELL trade. Probability: ", probability);
