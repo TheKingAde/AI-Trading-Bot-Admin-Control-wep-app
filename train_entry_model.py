@@ -6,17 +6,8 @@ Objective: Predict whether a trade will Win (1) or Lose (0) at breakout time
 Uses REAL outcomes from historical trades (Win=1/0).
 Focuses on session/time and breakout strength features aligned to the breakout event.
 
-Features (7):
-    - Symbol (encoded)
-    - Action (encoded)
-    - Hour_of_Day
-    - Is_NY_Session
-    - Is_Asian_Session
-    - Is_London_Session
-    - Breakout_Strength
-
 Target:
-    - Win (1=Win, 0=Loss)
+    - Win (1=Win, 0=Loss, 2=Breakeven)
 
 Output: Binary decision with probability and saved threshold for deployment.
 """
@@ -43,8 +34,8 @@ print("Learning from REAL trade outcomes—no synthetic rules")
 print("=" * 80)
 
 # ======================== Configuration ========================
-DB_PATH = Path('data/feature_subset.db')
-TABLE_NAME = 'feature_data'
+DB_PATH = Path('data/1-training_data.db')
+TABLE_NAME = 'training_data'
 MODEL_OUTPUT = 'entry_decision_model.pkl'
 
 # ======================== Training/Tuning Config (EDIT HERE) ========================
@@ -90,10 +81,10 @@ THRESHOLD_SCAN_START = 0.05   # widen scan downwards so low-calibrated models ca
 THRESHOLD_SCAN_STOP  = 0.90
 THRESHOLD_SCAN_STEP  = 0.01
 
-# Features for prediction (21 features - EXCLUDE target variables)
 INPUT_FEATURES = [
     'Action',
     'Hour_of_Day',
+    'Minutes_of_Hour_of_Day',
 ]
 
 TARGET = 'Win'  # Binary: 1=Win, 0=Loss
@@ -160,10 +151,43 @@ if TARGET in df.columns:
 
 print(f"✅ Type conversions complete")
 
+# ======================== EXCLUDE BREAKEVEN ROWS ========================
+# Only keep rows where Win is 0 (Loss) or 1 (Win)
+initial_count = len(df)
+df = df[df[TARGET].isin([0, 1])].reset_index(drop=True)
+filtered_count = len(df)
+print(f"✅ Excluded breakeven rows: {initial_count-filtered_count} removed, {filtered_count} remaining")
+
 # Extract features and target
 X = df[INPUT_FEATURES].copy()
 y = df[TARGET].copy()
+# === DATA LEAKAGE CHECKS ===
+print("\n=== DATA LEAKAGE CHECKS ===")
 
+# 1. Correlation with target
+corrs = {}
+for col in X.columns:
+    try:
+        corr = np.corrcoef(X[col], y)[0, 1]
+    except Exception:
+        corr = np.nan
+    corrs[col] = corr
+print("Feature correlations with target:")
+for k, v in corrs.items():
+    print(f"  {k:30s}: {v:.3f}")
+
+# 2. Unique values check
+for col in X.columns:
+    if X[col].nunique() == 1:
+        print(f"  {col} is constant (possible leakage or useless feature)")
+
+# 3. Duplicate columns
+for col in X.columns:
+    if X[col].equals(y):
+        print(f"  {col} is identical to target (direct leakage)")
+
+# 4. Check for suspiciously high feature importance
+print("\nIf any feature has correlation > 0.95 or is identical to target, you have leakage.")
 # Check target distribution BEFORE any processing
 print(f"\n📊 Raw target distribution:")
 print(f"   Class 1 (Win):  {(y == 1).sum():,} ({(y == 1).mean()*100:.1f}%)")

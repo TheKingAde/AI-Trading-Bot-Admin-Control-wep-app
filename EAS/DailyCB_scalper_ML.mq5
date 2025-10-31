@@ -337,201 +337,30 @@ bool CheckLicense()
 // Calculate all 21 features required by the model (MATCHING DATA COLLECTION)
 bool CalculateModelFeatures(int action, double &features[])
   {
-   ArrayResize(features, 21);
-   
-   // Feature 0: Symbol (0 for current symbol as single-instrument model)
-   features[0] = 0;
-   
-   // Feature 1: Action (0=SELL, 1=BUY)
-   features[1] = action;
-   
-   // Get ATR value
-   double atr[];
-   if(CopyBuffer(atrHandle, 0, 0, 1, atr) <= 0)
-     {
-      Print("Error getting ATR value");
-      return false;
-     }
-   
-   // Feature 2: ATR_rel (ATR relative to current price)
-   double curr_price = (action == 1) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   features[2] = atr[0] / curr_price;
-   
-   // Get EMA20 and EMA50 values
-   double ema20Buffer[], ema50Buffer[];
-   if(CopyBuffer(ema20Handle, 0, 0, 1, ema20Buffer) <= 0)
-     {
-      Print("Error getting EMA20 value");
-      return false;
-     }
-   if(CopyBuffer(ema50Handle, 0, 0, 1, ema50Buffer) <= 0)
-     {
-      Print("Error getting EMA50 value");
-      return false;
-     }
-   
-   double ema20 = ema20Buffer[0];
-   double ema50 = ema50Buffer[0];
-   
-   // Feature 3: EMA_diff ((EMA20 - EMA50) / EMA50)
-   features[3] = (ema50 != 0.0) ? (ema20 - ema50) / ema50 : 0.0;
-   
-   // Get RSI value
-   double rsiBuffer[];
-   if(CopyBuffer(rsiHandle, 0, 0, 1, rsiBuffer) <= 0)
-     {
-      Print("Error getting RSI value");
-      return false;
-     }
-   
-   // Feature 4: RSI14
-   features[4] = rsiBuffer[0];
-   
-   // Feature 5: Range_Ratio (prev D1 range / ATR)
-   double prev_high = iHigh(_Symbol, PERIOD_D1, 1);
-   double prev_low = iLow(_Symbol, PERIOD_D1, 1);
-   double prev_range = prev_high - prev_low;
-   features[5] = (atr[0] > 0) ? prev_range / atr[0] : 0.0;
-   
-   // Get 30-period high and low on D1
-   int high_idx = iHighest(_Symbol, PERIOD_D1, MODE_HIGH, 30, 1);
-   int low_idx = iLowest(_Symbol, PERIOD_D1, MODE_LOW, 30, 1);
-   double high30 = iHigh(_Symbol, PERIOD_D1, high_idx);
-   double low30 = iLow(_Symbol, PERIOD_D1, low_idx);
-   double close_now = iClose(_Symbol, PERIOD_D1, 0);
-   
-   // Feature 6: Pct_from_30h ((30h - close) / close)
-   features[6] = (close_now > 0) ? (high30 - close_now) / close_now : 0.0;
-   
-   // Feature 7: Pct_from_30l ((close - 30l) / close)
-   features[7] = (close_now > 0) ? (close_now - low30) / close_now : 0.0;
-   
-   // Feature 8: Breakout_level_atr_multiplier (using ATR_Multiplier from inputs)
-   features[8] = ATR_Multiplier;
-   
-   // Feature 9: SL_ATR_Mult
-   features[9] = SL_ATR_Multiplier;
-   
-   // Feature 10: TP_ATR_Mult
-   features[10] = TP_ATR_Multiplier;
-   
-   // Feature 11: Use_BE (breakeven setting)
-   features[11] = use_breakeven ? 1 : 0;
-   
-   // Feature 12: Risk_Reward_Ratio
-   features[12] = TP_ATR_Multiplier / SL_ATR_Multiplier;
-   
-   // Feature 13: High_Volatility (1 if ATR > recent average)
-   double atr_history[];
-   if(CopyBuffer(atrHandle, 0, 0, 14, atr_history) > 0)
-     {
-      double avg_atr = 0;
-      for(int i = 1; i < 14; i++)
-         avg_atr += atr_history[i];
-      avg_atr /= 13;
-      features[13] = (atr[0] > avg_atr) ? 1 : 0;
-     }
-   else
-      features[13] = 0;
-   
-   // Feature 14: Day_of_Week (0=Sunday, 1=Monday, ..., 6=Saturday)
-   MqlDateTime dt;
-   TimeToStruct(TimeCurrent(), dt);
-   features[14] = dt.day_of_week;
-   
-   // === H1 CANDLE PATTERN FEATURES (7 most recent CLOSED candles) ===
-   // Collect 7 H1 candles (index 1-7, skip current forming candle at index 0)
-   double total_body = 0.0;
-   double total_range = 0.0;
-   int bullish_count = 0;
-   int consecutive_bullish = 0;
-   int consecutive_bearish = 0;
-   
-   // Arrays to store H1 candle data
-   double h1_open[], h1_high[], h1_low[], h1_close[];
-   
-   if(CopyOpen(_Symbol, PERIOD_H1, 1, 7, h1_open) <= 0 ||
-      CopyHigh(_Symbol, PERIOD_H1, 1, 7, h1_high) <= 0 ||
-      CopyLow(_Symbol, PERIOD_H1, 1, 7, h1_low) <= 0 ||
-      CopyClose(_Symbol, PERIOD_H1, 1, 7, h1_close) <= 0)
-     {
-      Print("Error getting H1 candle data");
-      return false;
-     }
-   
-   // Process 7 H1 candles
-   for(int i = 0; i < 7; i++)
-     {
-      double body_size = MathAbs(h1_close[i] - h1_open[i]);
-      double range = h1_high[i] - h1_low[i];
-      int is_bullish = (h1_close[i] > h1_open[i]) ? 1 : 0;
-      
-      total_body += body_size;
-      total_range += range;
-      
-      if(is_bullish)
-         bullish_count++;
-     }
-   
-   // Count consecutive bullish from most recent (index 0 is most recent)
-   for(int i = 0; i < 7; i++)
-     {
-      if(h1_close[i] > h1_open[i])
-         consecutive_bullish++;
-      else
-         break;
-     }
-   
-   // Count consecutive bearish from most recent
-   for(int i = 0; i < 7; i++)
-     {
-      if(h1_close[i] < h1_open[i])
-         consecutive_bearish++;
-      else
-         break;
-     }
-   
-   // Feature 15: Consecutive_Bullish
-   features[15] = consecutive_bullish;
-   
-   // Feature 16: Consecutive_Bearish
-   features[16] = consecutive_bearish;
-   
-   // Feature 17: Avg_Body_Size
-   features[17] = total_body / 7.0;
-   
-   // Feature 18: Avg_Range
-   features[18] = total_range / 7.0;
-   
-   // Feature 19: Trend_Score ((bullish_count * 2) - 7)
-   // Range: -7 (all bearish) to +7 (all bullish)
-   features[19] = (bullish_count * 2) - 7;
-   
-   // Feature 20: Momentum_Strength (avg_body / avg_range)
-   double avg_range = total_range / 7.0;
-   features[20] = (avg_range > 0) ? (total_body / 7.0) / avg_range : 0.0;
-   
-   return true;
+   ArrayResize(features, 3);
+// Feature 0: Action (0=SELL, 1=BUY)
+features[0] = action;
+// Feature 1: Hour_of_Day
+MqlDateTime dt;
+TimeToStruct(TimeCurrent(), dt);
+features[1] = dt.hour;
+// Feature 2: Minutes_of_Hour_of_Day
+features[2] = dt.min;
+return true;
   }
 
 // Debug function to print all features with labels
 void PrintModelFeatures(double &features[])
   {
-   string feature_names[21] = {
-      "Symbol", "Action", "ATR_rel", "EMA_diff", "RSI14", "Range_Ratio",
-      "Pct_from_30h", "Pct_from_30l", "Breakout_level_atr_multiplier",
-      "SL_ATR_Mult", "TP_ATR_Mult", "Use_BE", "Risk_Reward_Ratio",
-      "High_Volatility", "Day_of_Week", "Consecutive_Bullish",
-      "Consecutive_Bearish", "Avg_Body_Size", "Avg_Range",
-      "Trend_Score", "Momentum_Strength"
-   };
-   
-   Print("========== ML MODEL FEATURES ==========");
-   for(int i = 0; i < 21; i++)
-     {
-      Print(StringFormat("[%d] %s = %.8f", i, feature_names[i], features[i]));
-     }
-   Print("========================================");
+  string feature_names[3] = {
+    "Action", "Hour_of_Day", "Minutes_of_Hour_of_Day"
+  };
+  Print("========== ML MODEL FEATURES ==========");
+  for(int i = 0; i < 3; i++)
+    {
+    Print(StringFormat("[%d] %s = %.8f", i, feature_names[i], features[i]));
+    }
+  Print("========================================");
   }
 
 // Send features to ML model and get decision WITH FULL TRADE CONTEXT
@@ -548,44 +377,16 @@ bool GetModelDecision(double &features[], string &trade_id_out, double &probabil
                                     dt_struct.year, dt_struct.mon, dt_struct.day,
                                     dt_struct.hour, dt_struct.min, dt_struct.sec);
    
-   // Build COMPLETE JSON payload with ALL database fields
-   string json = "{";
-   
-   // Timestamp
-   json += "\"Time\":\"" + timestamp + "\",";
-   
-   // Named features (21 model features)
-   json += "\"Symbol\":" + DoubleToString(features[0], 0) + ",";
-   json += "\"Action\":" + DoubleToString(features[1], 0) + ",";
-   json += "\"ATR_rel\":" + DoubleToString(features[2], 8) + ",";
-   json += "\"EMA_diff\":" + DoubleToString(features[3], 8) + ",";
-   json += "\"RSI14\":" + DoubleToString(features[4], 8) + ",";
-   json += "\"Range_Ratio\":" + DoubleToString(features[5], 8) + ",";
-   json += "\"Pct_from_30h\":" + DoubleToString(features[6], 8) + ",";
-   json += "\"Pct_from_30l\":" + DoubleToString(features[7], 8) + ",";
-   json += "\"Breakout_level_atr_multiplier\":" + DoubleToString(features[8], 8) + ",";
-   json += "\"SL_ATR_Mult\":" + DoubleToString(features[9], 8) + ",";
-   json += "\"TP_ATR_Mult\":" + DoubleToString(features[10], 8) + ",";
-   json += "\"Use_BE\":" + DoubleToString(features[11], 0) + ",";
-   json += "\"Risk_Reward_Ratio\":" + DoubleToString(features[12], 8) + ",";
-   json += "\"High_Volatility\":" + DoubleToString(features[13], 0) + ",";
-   json += "\"Day_of_Week\":" + DoubleToString(features[14], 0) + ",";
-   json += "\"Consecutive_Bullish\":" + DoubleToString(features[15], 0) + ",";
-   json += "\"Consecutive_Bearish\":" + DoubleToString(features[16], 0) + ",";
-   json += "\"Avg_Body_Size\":" + DoubleToString(features[17], 8) + ",";
-   json += "\"Avg_Range\":" + DoubleToString(features[18], 8) + ",";
-   json += "\"Trend_Score\":" + DoubleToString(features[19], 0) + ",";
-   json += "\"Momentum_Strength\":" + DoubleToString(features[20], 8) + ",";
-   
-   // Trading metadata (NOT part of model features but needed for DB)
-   json += "\"Entry\":" + DoubleToString(entry_price, _Digits) + ",";
-   json += "\"SL\":" + DoubleToString(sl_price, _Digits) + ",";
-   json += "\"TP\":" + DoubleToString(tp_price, _Digits) + ",";
-   json += "\"ATR\":" + DoubleToString(atr_value, _Digits);
-   
-   // Exit_Price, Profitable, Final_PnL, Outcome_Category will be NULL until trade closes
-   
-   json += "}";
+  // Build JSON payload with only the 3 model features and trade metadata
+  string json = "{";
+  json += "\"Time\":\"" + timestamp + "\",";
+  json += "\"Action\":" + DoubleToString(features[0], 0) + ",";
+  json += "\"Hour_of_Day\":" + DoubleToString(features[1], 0) + ",";
+  json += "\"Minutes_of_Hour_of_Day\":" + DoubleToString(features[2], 0) + ",";
+  json += "\"Entry\":" + DoubleToString(entry_price, _Digits) + ",";
+  json += "\"SL\":" + DoubleToString(sl_price, _Digits) + ",";
+  json += "\"TP\":" + DoubleToString(tp_price, _Digits) + ",";
+  json += "}";
    
    char post_data[];
    char result_data[];

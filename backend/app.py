@@ -131,16 +131,6 @@ async def entry_decision():
         payload = await request.get_json()
         if payload is None:
             return jsonify({"error": "Expected JSON body"}), 400
-
-        # Extract model features only (21 features) for prediction
-        model_features_names = [
-            'Symbol', 'Action', 'ATR_rel', 'EMA_diff', 'RSI14', 'Range_Ratio',
-            'Pct_from_30h', 'Pct_from_30l', 'Breakout_level_atr_multiplier',
-            'SL_ATR_Mult', 'TP_ATR_Mult', 'Use_BE', 'Risk_Reward_Ratio',
-            'High_Volatility', 'Day_of_Week', 'Consecutive_Bullish',
-            'Consecutive_Bearish', 'Avg_Body_Size', 'Avg_Range',
-            'Trend_Score', 'Momentum_Strength'
-        ]
         
         # Build feature DataFrame for model prediction
         df = _build_feature_df(payload)
@@ -154,7 +144,7 @@ async def entry_decision():
         # Generate a unique Trade_ID for this request
         trade_id = str(uuid.uuid4())
         
-        db_path = str(ROOT_DIR / 'data' / 'training_data.db')
+        db_path = str(ROOT_DIR / 'data' / '1-training_data_prod.db')
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
@@ -163,18 +153,13 @@ async def entry_decision():
         db_columns = [row[1] for row in cursor.fetchall()]
         
         # Build complete row with ALL 30 fields
-        row = {}
-        
-        # 1. Time (if provided, else use current)
-        row['Time'] = payload.get('Time', datetime.utcnow().isoformat())
-        
-        # 2-26: The 21 model features + 4 trade context fields (Entry, SL, TP, ATR)
+        row = {}        
         for col in db_columns:
             if col in payload:
                 row[col] = payload[col]
             elif col == 'Trade_ID':
                 continue  # Handle separately
-            elif col in ['Exit_Price', 'Profitable', 'Final_PnL', 'Outcome_Category']:
+            elif col in ['Win', 'Profit', 'Profit_Pct', 'Outcome']:
                 row[col] = None  # Will be filled on trade close
             else:
                 row[col] = None  # Default NULL for any missing fields
@@ -226,12 +211,12 @@ async def entry_update():
             return jsonify({"error": "Missing trade_id"}), 400
         
         # Allow updating outcome fields
-        allowed = ['Exit_Price', 'Profitable', 'Final_PnL', 'Outcome_Category']
+        allowed = ['Win', 'Profit', 'Profit_Pct', 'Outcome']
         updates = {k: payload[k] for k in allowed if k in payload}
         if not updates:
             return jsonify({"error": "No updatable fields provided"}), 400
         
-        db_path = str(ROOT_DIR / 'data' / 'training_data.db')
+        db_path = str(ROOT_DIR / 'data' / '1-training_data_prod.db')
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         set_clause = ', '.join([f"{k}=?" for k in updates])
