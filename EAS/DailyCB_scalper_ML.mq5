@@ -339,89 +339,83 @@ bool CalculateModelFeatures(int action, double &features[])
   {
    ArrayResize(features, 3);
 // Feature 0: Action (0=SELL, 1=BUY)
-features[0] = action;
+   features[0] = action;
 // Feature 1: Hour_of_Day
-MqlDateTime dt;
-TimeToStruct(TimeCurrent(), dt);
-features[1] = dt.hour;
+   MqlDateTime dt;
+   TimeToStruct(TimeCurrent(), dt);
+   features[1] = dt.hour;
 // Feature 2: Minutes_of_Hour_of_Day
-features[2] = dt.min;
-return true;
+   features[2] = dt.min;
+   return true;
   }
 
 // Debug function to print all features with labels
 void PrintModelFeatures(double &features[])
   {
-  string feature_names[3] = {
-    "Action", "Hour_of_Day", "Minutes_of_Hour_of_Day"
-  };
-  Print("========== ML MODEL FEATURES ==========");
-  for(int i = 0; i < 3; i++)
-    {
-    Print(StringFormat("[%d] %s = %.8f", i, feature_names[i], features[i]));
-    }
-  Print("========================================");
+   string feature_names[3] =
+     {
+      "Action", "Hour_of_Day", "Minutes_of_Hour_of_Day"
+     };
+   Print("========== ML MODEL FEATURES ==========");
+   for(int i = 0; i < 3; i++)
+     {
+      Print(StringFormat("[%d] %s = %.8f", i, feature_names[i], features[i]));
+     }
+   Print("========================================");
   }
 
 // Send features to ML model and get decision WITH FULL TRADE CONTEXT
-bool GetModelDecision(double &features[], string &trade_id_out, double &probability_out, 
+bool GetModelDecision(double &features[], string &trade_id_out, double &probability_out,
                       double entry_price, double sl_price, double tp_price, double atr_value)
   {
    string url = admin_url + "/api/entry-decision";
    string headers = "Content-Type: application/json\r\n";
-   
-   // Get current timestamp in ISO format
+
+// Get current timestamp in ISO format
    MqlDateTime dt_struct;
    TimeToStruct(TimeCurrent(), dt_struct);
-   string timestamp = StringFormat("%04d-%02d-%02dT%02d:%02d:%02d",
-                                    dt_struct.year, dt_struct.mon, dt_struct.day,
-                                    dt_struct.hour, dt_struct.min, dt_struct.sec);
-   
-  // Build JSON payload with only the 3 model features and trade metadata
-  string json = "{";
-  json += "\"Time\":\"" + timestamp + "\",";
-  json += "\"Action\":" + DoubleToString(features[0], 0) + ",";
-  json += "\"Hour_of_Day\":" + DoubleToString(features[1], 0) + ",";
-  json += "\"Minutes_of_Hour_of_Day\":" + DoubleToString(features[2], 0) + ",";
-  json += "\"Entry\":" + DoubleToString(entry_price, _Digits) + ",";
-  json += "\"SL\":" + DoubleToString(sl_price, _Digits) + ",";
-  json += "\"TP\":" + DoubleToString(tp_price, _Digits) + ",";
-  json += "}";
-   
+
+// Build JSON payload with only the 3 model features and trade metadata
+   string json = "{";
+   json += "\"Action\":" + DoubleToString(features[0], 0) + ",";
+   json += "\"Hour_of_Day\":" + DoubleToString(features[1], 0) + ",";
+   json += "\"Minutes_of_Hour_of_Day\":" + DoubleToString(features[2], 0) + ",";
+   json += "}";
+
    char post_data[];
    char result_data[];
    string result_headers;
-   
+
    StringToCharArray(json, post_data, 0, WHOLE_ARRAY, CP_UTF8);
    ArrayResize(post_data, ArraySize(post_data) - 1);
-   
+
    int res = WebRequest("POST", url, headers, 5000, post_data, result_data, result_headers);
-   
+
    if(res != 200)
      {
       Print("ML Model request failed. Error code: ", res);
       return false;
      }
-   
+
    string response = CharArrayToString(result_data);
    Print("ML Model response: ", response);
-   
-   // Parse JSON response (simple parsing for: {"enter":1,"probability":0.75,"confidence":0.5,"threshold":0.7,"trade_id":"..."})
+
+// Parse JSON response (simple parsing for: {"enter":1,"probability":0.75,"confidence":0.5,"threshold":0.7,"trade_id":"..."})
    int enter_pos = StringFind(response, "\"enter\":");
    int prob_pos = StringFind(response, "\"probability\":");
    int trade_id_pos = StringFind(response, "\"trade_id\":\"");
-   
+
    if(enter_pos < 0 || prob_pos < 0 || trade_id_pos < 0)
      {
       Print("Failed to parse model response");
       return false;
      }
-   
-   // Extract enter value
+
+// Extract enter value
    string enter_str = StringSubstr(response, enter_pos + 8, 1);
    int enter_value = (int)StringToInteger(enter_str);
-   
-   // Extract probability
+
+// Extract probability
    string prob_substr = StringSubstr(response, prob_pos + 15);
    int prob_end = StringFind(prob_substr, ",");
    if(prob_end > 0)
@@ -429,15 +423,15 @@ bool GetModelDecision(double &features[], string &trade_id_out, double &probabil
       string prob_str = StringSubstr(prob_substr, 0, prob_end);
       probability_out = StringToDouble(prob_str);
      }
-   
-   // Extract trade_id
+
+// Extract trade_id
    string trade_id_substr = StringSubstr(response, trade_id_pos + 12);
    int trade_id_end = StringFind(trade_id_substr, "\"");
    if(trade_id_end > 0)
       trade_id_out = StringSubstr(trade_id_substr, 0, trade_id_end);
-   
+
    Print("Model decision: enter=", enter_value, ", probability=", probability_out, ", trade_id=", trade_id_out);
-   
+
    return (enter_value == 1);
   }
 
@@ -446,21 +440,21 @@ bool UpdateTradeOutcome(string trade_id, double profit, string outcome, double e
   {
    string url = admin_url + "/api/entry-update";
    string headers = "Content-Type: application/json\r\n";
-   
+
    int profitable = (profit > 0) ? 1 : 0;
-   
-   string json = StringFormat("{\"trade_id\":\"%s\",\"Profitable\":%d,\"Final_PnL\":%.2f,\"Outcome_Category\":\"%s\",\"Exit_Price\":%.5f}",
+
+   string json = StringFormat("{\"trade_id\":\"%s\",\"Win\":%d,\"Profit\":%.2f,\"Outcome\":\"%s\"}",
                               trade_id, profitable, profit, outcome, exit_price);
-   
+
    char post_data[];
    char result_data[];
    string result_headers;
-   
+
    StringToCharArray(json, post_data, 0, WHOLE_ARRAY, CP_UTF8);
    ArrayResize(post_data, ArraySize(post_data) - 1);
-   
+
    int res = WebRequest("POST", url, headers, 5000, post_data, result_data, result_headers);
-   
+
    if(res == 200)
      {
       Print("Trade outcome updated successfully for trade_id: ", trade_id);
@@ -508,30 +502,6 @@ int OnInit()
    if(atrHandle == INVALID_HANDLE)
      {
       Print("Error creating ATR handle. Code: ", _LastError);
-      return(INIT_FAILED);
-     }
-   
-   // Create EMA20 handle (for EMA_diff calculation)
-   ema20Handle = iMA(_Symbol, PERIOD_D1, 20, 0, MODE_EMA, PRICE_CLOSE);
-   if(ema20Handle == INVALID_HANDLE)
-     {
-      Print("Error creating EMA20 handle. Code: ", _LastError);
-      return(INIT_FAILED);
-     }
-   
-   // Create EMA50 handle (for EMA_diff calculation)
-   ema50Handle = iMA(_Symbol, PERIOD_D1, 50, 0, MODE_EMA, PRICE_CLOSE);
-   if(ema50Handle == INVALID_HANDLE)
-     {
-      Print("Error creating EMA50 handle. Code: ", _LastError);
-      return(INIT_FAILED);
-     }
-   
-   // Create RSI handle
-   rsiHandle = iRSI(_Symbol, PERIOD_D1, 14, PRICE_CLOSE);
-   if(rsiHandle == INVALID_HANDLE)
-     {
-      Print("Error creating RSI handle. Code: ", _LastError);
       return(INIT_FAILED);
      }
 
@@ -635,7 +605,7 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
                   status = "closed";
                   // Get exit price
                   double exit_price = HistoryDealGetDouble(deal_ticket, DEAL_PRICE);
-                  
+
                   // Determine trade direction
                   if(deal_type == DEAL_TYPE_BUY)
                      trade_type = "SELL";
@@ -644,7 +614,7 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
                         trade_type = "BUY";
                      else
                         return;
-                  
+
                   // Update ML model with trade outcome INCLUDING EXIT PRICE
                   if(pending_trade_id != "")
                     {
@@ -789,7 +759,7 @@ void OnTick()
       // Calculate SL/TP BEFORE feature calculation (needed for GetModelDecision)
       double stopLoss   = NormalizeDouble(upperBreakout - (atrValue[0] * SL_ATR_Multiplier), _Digits);
       double takeProfit = NormalizeDouble(upperBreakout + (atrValue[0] * TP_ATR_Multiplier), _Digits);
-      
+
       // Calculate features for BUY action
       double features[];
       if(!CalculateModelFeatures(1, features)) // 1 = BUY
@@ -797,23 +767,23 @@ void OnTick()
          Print("Failed to calculate features for BUY");
          return;
         }
-      
+
       // Debug: Print features for verification
       PrintModelFeatures(features);
-      
+
       // Get ML model decision WITH COMPLETE TRADE DATA
       string trade_id;
       double probability;
       bool model_approved = GetModelDecision(features, trade_id, probability,
                                              curr_ask_price, stopLoss, takeProfit, atrValue[0]);
-      
+
       if(!model_approved)
         {
          Print("ML Model rejected BUY trade. Probability: ", probability);
          allow_buy_trade = false; // Prevent retry on same breakout
          return;
         }
-      
+
       Print("ML Model approved BUY trade. Probability: ", probability);
 
       if(m_trade.Buy(LotSize, _Symbol, 0.0, stopLoss, takeProfit, m_comment))
@@ -822,7 +792,7 @@ void OnTick()
          pending_trade_id = trade_id;
          pending_entry_price = curr_ask_price;
          pending_entry_time = TimeCurrent();
-         
+
          allow_buy_trade = false;
          allow_sell_trade = false; // ensure only one trade per day
          message = StringFormat("DailyCB: ML-Approved Buy Position Opened. Pair: %s, Probability: %.2f%%", _Symbol, probability * 100);
@@ -838,7 +808,7 @@ void OnTick()
       // Calculate SL/TP BEFORE feature calculation (needed for GetModelDecision)
       double stopLoss   = NormalizeDouble(lowerBreakout + (atrValue[0] * SL_ATR_Multiplier), _Digits);
       double takeProfit = NormalizeDouble(lowerBreakout - (atrValue[0] * TP_ATR_Multiplier), _Digits);
-      
+
       // Calculate features for SELL action
       double features[];
       if(!CalculateModelFeatures(0, features)) // 0 = SELL
@@ -846,23 +816,23 @@ void OnTick()
          Print("Failed to calculate features for SELL");
          return;
         }
-      
+
       // Debug: Print features for verification
       PrintModelFeatures(features);
-      
+
       // Get ML model decision WITH COMPLETE TRADE DATA
       string trade_id;
       double probability;
       bool model_approved = GetModelDecision(features, trade_id, probability,
                                              curr_bid_price, stopLoss, takeProfit, atrValue[0]);
-      
+
       if(!model_approved)
         {
          Print("ML Model rejected SELL trade. Probability: ", probability);
          allow_sell_trade = false; // Prevent retry on same breakout
          return;
         }
-      
+
       Print("ML Model approved SELL trade. Probability: ", probability);
 
       if(m_trade.Sell(LotSize, _Symbol, 0.0, stopLoss, takeProfit, m_comment))
@@ -871,7 +841,7 @@ void OnTick()
          pending_trade_id = trade_id;
          pending_entry_price = curr_bid_price;
          pending_entry_time = TimeCurrent();
-         
+
          allow_buy_trade = false;
          allow_sell_trade = false; // ensure only one trade per day
          message = StringFormat("DailyCB: ML-Approved Sell Position Opened. Pair: %s, Probability: %.2f%%", _Symbol, probability * 100);

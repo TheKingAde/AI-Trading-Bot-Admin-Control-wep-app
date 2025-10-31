@@ -81,11 +81,6 @@ async def index():
 
 # ===================== Inference Endpoint for EA =====================
 # POST /api/entry-decision
-# Accepts JSON either as:
-# 1) { "features": [v1, v2, ..., v21] } in the exact model training order
-# 2) { "Symbol": ..., "Action": ..., ..., "Momentum_Strength": ... } keyed by feature names
-# Returns: { enter: 0|1, confidence: float, probability: float, threshold: float }
-
 def _build_feature_df(payload: dict):
     if not getattr(app, 'model', None) or not getattr(app, 'scaler', None) or not getattr(app, 'features', None):
         raise RuntimeError("Model not loaded on server. Train and place 'entry_decision_model.pkl' at project root.")
@@ -198,7 +193,6 @@ async def entry_decision():
 
 # ===================== Update trade outcome after close =====================
 # POST /api/entry-update
-# Body: { "trade_id": ..., "Exit_Price": ..., "Profitable": 1/0, "Final_PnL": float, "Outcome_Category": "Win"/"Loss" }
 # Updates the row with matching Trade_ID
 @app.post('/api/entry-update')
 async def entry_update():

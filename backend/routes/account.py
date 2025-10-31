@@ -60,6 +60,7 @@ async def post_trade_history():
             time_open = t.get('time_open')
             time_close = t.get('time_close')
             status = t.get('status', 'closed')  # 'open' or 'closed'
+            probability = float(t.get('ai_confidence', 0))
 
             # For open trades, check if trade already exists (by license_key, symbol, lots, direction, opened_at)
             # If exists, update it; otherwise insert
@@ -80,7 +81,7 @@ async def post_trade_history():
                 else:
                     # Insert new open trade
                     await db.execute('''
-                        INSERT INTO trades (license_key, pair, lots, direction, result, opened_at, closed_at, status, created_at)
+                        INSERT INTO trades (license_key, pair, lots, direction, result, opened_at, closed_at, status, ai_confidence, created_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ''', (
                         license_key,
@@ -91,6 +92,7 @@ async def post_trade_history():
                         time_open,
                         time_close,
                         status,
+                        probability,
                         datetime.utcnow().isoformat()
                     ))
                     inserted_count += 1
@@ -164,7 +166,7 @@ async def get_live_trades(user):
                 "direction": row[2],
                 "profit": row[3],
                 "status": row[4],
-               "ai_confidence": f"{int(row[5] * 100)}%" if row[5] is not None else "Unavailable"
+               "ai_confidence": f"{int(row[5] * 100)}%" if row[5] is not None or row[5] > 0 else "Unavailable"
             })
     
         return jsonify({"trades": trades if trades else [{"pair": "No trades", "lots": 0, "direction": "-", "profit": 0, "status": "-", "ai_confidence": "Unavailable"}]})
