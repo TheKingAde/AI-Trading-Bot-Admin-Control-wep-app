@@ -147,9 +147,9 @@ async def entry_decision():
         db_path = str(ROOT_DIR / 'data' / '1-training_data_prod.db')
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
-        
-        # Get all columns in trades_dataset
-        cursor.execute(f"PRAGMA table_info(trades_dataset)")
+
+        # Get all columns in training_data
+        cursor.execute(f"PRAGMA table_info(training_data)")
         db_columns = [row[1] for row in cursor.fetchall()]
         
         # Build complete row with ALL 30 fields
@@ -221,7 +221,7 @@ async def entry_update():
         cursor = conn.cursor()
         set_clause = ', '.join([f"{k}=?" for k in updates])
         values = list(updates.values()) + [trade_id]
-        cursor.execute(f"UPDATE trades_dataset SET {set_clause} WHERE Trade_ID=?", values)
+        cursor.execute(f"UPDATE training_data SET {set_clause} WHERE Trade_ID=?", values)
         conn.commit()
         affected = cursor.rowcount
         conn.close()
