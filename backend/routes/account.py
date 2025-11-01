@@ -239,32 +239,6 @@ async def get_equity_curve(user):
             "balance": balance_values
         })
 
-
-# @account_bp.post('/ai_insights')
-# async def post_ai_insights():
-#     """Public endpoint for EAs to send AI insights"""
-#     data = await request.get_json()
-#     license_key = data.get('license_key')
-#     insights = data.get('insights', [])
-    
-#     if not license_key:
-#         return jsonify({"error": "license_key is required"}), 400
-    
-#     async with get_db() as db:
-#         # Verify license exists
-#         cursor = await db.execute('SELECT status FROM licenses WHERE key = ?', (license_key,))
-#         lic = await cursor.fetchone()
-#         if not lic:
-#             return jsonify({"error": "Invalid license key"}), 404
-        
-#         for insight in insights:
-#             await db.execute('INSERT INTO ai_insights (license_key, insight, created_at) VALUES (?, ?, ?)',
-#                              (license_key, insight, datetime.utcnow().isoformat()))
-#         await db.commit()
-    
-#     return jsonify({"status": "insights stored", "count": len(insights)})
-
-
 @account_bp.get('/ai_insights')
 @auth_required
 async def get_ai_insights(user):
@@ -277,7 +251,7 @@ async def get_ai_insights(user):
     async with get_db() as db:
         # Get recent insights (last 5)
         cursor = await db.execute(
-            'SELECT insight FROM ai_insights WHERE license_key = ? ORDER BY created_at DESC LIMIT 5',
+            'SELECT insight FROM ai_insights WHERE license_key = ? ORDER BY created_at DESC',
             (license_key,)
         )
         rows = await cursor.fetchall()

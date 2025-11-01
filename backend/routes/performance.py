@@ -7,10 +7,13 @@ from models.db import get_db
 performance_bp = Blueprint('performance', __name__)
 
 peak_balance = 0
+min_win_rate = 50
+insights = []
 @performance_bp.get('/performance')
 @auth_required
 async def get_performance(user):
     """Get performance data calculated from trade history for a specific license key"""
+    global insights
     license_key = request.args.get('license_key')
     
     if not license_key:
@@ -40,7 +43,7 @@ async def get_performance(user):
         
         rows = await cursor.fetchall()
         performance = []
-
+        insight = []
         for row in rows:
             pair = row[0]
             total_trades = row[1]
@@ -49,7 +52,11 @@ async def get_performance(user):
             
             # Calculate win rate
             win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
-            
+            if win_rate < min_win_rate:
+                insight.append(f"Warning: Bot is underperforming in pair: {pair}")
+            if win_rate >= min_win_rate:
+                insight.append(f"Everything is working as expected in pair: {pair}")
+
             # Get all trade results for drawdown calculation
             trades_cursor = await db.execute('''
                 SELECT result 
@@ -79,7 +86,7 @@ async def get_performance(user):
                     current_drawdown = ((peak_balance - running_balance) / peak_balance) * 100
                     if current_drawdown > max_relative_drawdown:
                         max_relative_drawdown = current_drawdown
-
+            
             performance.append({
                 "pair": pair,
                 "win_rate": round(win_rate, 2),
@@ -88,7 +95,25 @@ async def get_performance(user):
                 "trades": total_trades,
                 "total_profit": round(total_profit, 2)
             })
-    
+
+        if insight != insights:
+            insights = insight  # update cache
+
+            # Remove old rows for this license
+            await db.execute('DELETE FROM ai_insights WHERE license_key = ?', (license_key,))
+
+            # Insert new ones
+            for i in insights:
+                await db.execute(
+                    '''
+                    INSERT INTO ai_insights (license_key, insight, created_at)
+                    VALUES (?, ?, ?)
+                    ''',
+                    (license_key, i, datetime.utcnow().isoformat())
+                )
+
+            await db.commit()
+
     return jsonify({
         "performance": performance if performance else [{
             "pair": "No data",

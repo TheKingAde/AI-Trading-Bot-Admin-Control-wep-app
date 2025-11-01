@@ -65,6 +65,7 @@ SCHEMA = [
     '''CREATE TABLE IF NOT EXISTS ai_insights (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         license_key TEXT NOT NULL,
+        pair TEXT NOT NULL,
         insight TEXT NOT NULL,
         created_at TEXT NOT NULL,
         FOREIGN KEY (license_key) REFERENCES licenses(key)
