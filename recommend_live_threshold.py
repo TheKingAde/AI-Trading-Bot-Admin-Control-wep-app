@@ -33,8 +33,8 @@ from sklearn.metrics import precision_score, recall_score, f1_score, roc_auc_sco
 def parse_args():
     p = argparse.ArgumentParser(description="Recommend probability threshold for live trading")
     p.add_argument("--model", default="entry_decision_model.pkl", help="Path to trained model package")
-    p.add_argument("--db", default=str(Path("data")/"feature_subset.db"), help="SQLite DB with evaluation data")
-    p.add_argument("--table", default="feature_data", help="Table name in DB")
+    p.add_argument("--db", default=str(Path("data")/"1-training_data_prod.db"), help="SQLite DB with evaluation data")
+    p.add_argument("--table", default="training_data", help="Table name in DB")
     p.add_argument("--target", default="Win", help="Binary target column (Win or Profitable)")
     p.add_argument("--opt", default="precision", choices=["precision","f1","expected_value"], help="Optimization objective")
     p.add_argument("--target-precision", type=float, default=0.55, help="Minimum precision to accept (if opt!=precision, still enforced if >0)")
@@ -179,11 +179,15 @@ def main():
     df = load_data(args.db, args.table)
     print(f"📂 Loaded {len(df):,} rows × {len(df.columns)} cols from {args.db}::{args.table}")
 
+    # Convert all columns to numeric where possible (handles string data from SQLite)
+    for col in df.columns:
+        df[col] = pd.to_numeric(df[col], errors='ignore')
+    
     # Verify and prepare
     ensure_features(df, features)
     X = prepare_X(df, features)
 
-    # Target and profits (optional)
+    # Target and profits (optional) - ensure numeric conversion
     y = None
     if args.target in df.columns:
         y = pd.to_numeric(df[args.target], errors='coerce').fillna(0).astype(int)
@@ -235,6 +239,7 @@ def main():
         })
         if y is not None:
             summary['win_rate'] = grp[args.target].mean()
+            summary['loss_rate'] = 1 - summary['win_rate']
         if profits is not None:
             summary['avg_profit'] = grp['Profit'].mean()
             summary['total_profit'] = grp['Profit'].sum()
@@ -245,17 +250,33 @@ def main():
             print(f"No groups with at least {args.min_count} samples.")
             return
         # Pretty prints
-        cols = [group_col, 'count'] + ([ 'win_rate'] if 'win_rate' in summary.columns else []) + ([ 'avg_profit', 'total_profit'] if 'avg_profit' in summary.columns else [])
-        print("\nTop by win_rate:")
+        cols = [group_col, 'count'] + ([ 'win_rate', 'loss_rate'] if 'win_rate' in summary.columns else []) + ([ 'avg_profit', 'total_profit'] if 'avg_profit' in summary.columns else [])
+        
+        print("\n🏆 BEST HOURS (Top by win_rate):")
         if 'win_rate' in summary.columns:
-            print(summary.sort_values('win_rate', ascending=False)[cols].head(10).to_string(index=False, float_format=lambda x: f"{x:.4f}"))
+            best_hours = summary.sort_values('win_rate', ascending=False).head(10)
+            print(best_hours[cols].to_string(index=False, float_format=lambda x: f"{x:.4f}"))
         else:
             print("(win_rate not available; target column missing)")
+        
+        print("\n💀 WORST HOURS (Top by loss_rate):")
+        if 'loss_rate' in summary.columns:
+            worst_hours = summary.sort_values('loss_rate', ascending=False).head(10)
+            print(worst_hours[cols].to_string(index=False, float_format=lambda x: f"{x:.4f}"))
+        
+        # ALL HOURS RANKED
+        print("\n📊 ALL HOURS RANKED (by win_rate):")
+        if 'win_rate' in summary.columns:
+            all_hours = summary.sort_values('win_rate', ascending=False)
+            print(all_hours[cols].to_string(index=False, float_format=lambda x: f"{x:.4f}"))
+        
         if 'avg_profit' in summary.columns:
-            print("\nTop by avg_profit:")
+            print("\n💰 Top by avg_profit:")
             print(summary.sort_values('avg_profit', ascending=False)[cols].head(10).to_string(index=False, float_format=lambda x: f"{x:.4f}"))
-            print("\nTop by total_profit:")
+            print("\n💵 Top by total_profit:")
             print(summary.sort_values('total_profit', ascending=False)[cols].head(10).to_string(index=False, float_format=lambda x: f"{x:.4f}"))
+            print("\n📉 Worst by avg_profit:")
+            print(summary.sort_values('avg_profit', ascending=True)[cols].head(10).to_string(index=False, float_format=lambda x: f"{x:.4f}"))
 
     if True:
         # Overall by hour
