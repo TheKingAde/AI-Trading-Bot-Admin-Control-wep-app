@@ -84,20 +84,6 @@ void OnDeinit(const int reason)
       IndicatorRelease(atrHandle);
   }
 
-//+------------------------------------------------------------------
-bool is_new_week_open()
-  {
-   MqlDateTime dt;
-   TimeToStruct(TimeCurrent(), dt);
-   int hour_of_day = dt.hour;
-   int day_of_week = dt.day_of_week;
-
-   if(day_of_week == 1 && hour_of_day <= 7)
-      return false;
-   else
-      return true;
-  }
-
 // Tick function
 void OnTick()
   {
@@ -137,11 +123,6 @@ void OnTick()
 
    if(curr_bid_price > upperBreakout && allow_trade)
      {
-      if(!is_new_week_open())
-        {
-         allow_trade = false;
-         return;
-        }
       double stopLoss = NormalizeDouble(upperBreakout - (atrValue[0] * SL_ATR_Multiplier), _Digits);
       // No TP, will use trailing SL instead
       if(m_trade.Buy(LotSize, _Symbol, curr_ask_price, stopLoss, 0, m_comment))
@@ -158,11 +139,6 @@ void OnTick()
 
    if(curr_bid_price < lowerBreakout && allow_trade)
      {
-      if(!is_new_week_open())
-        {
-         allow_trade = false;
-         return;
-        }
       double stopLoss = NormalizeDouble(lowerBreakout + (atrValue[0] * SL_ATR_Multiplier), _Digits);
       // No TP, will use trailing SL instead
       if(m_trade.Sell(LotSize, _Symbol, curr_bid_price, stopLoss, 0, m_comment))

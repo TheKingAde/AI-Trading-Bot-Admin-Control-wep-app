@@ -32,8 +32,8 @@ datetime lastBreakoutTime = 0;
 double bal;
 double ini_bal;
 const string TG_API_URL = "https://api.telegram.org";  // Base URL for Telegram API
-string botTkn = "7969763015:AAEliO2m1l9Yn7dDY8j_PKvG3_4yHlXbuZY";  // Telegram bot token
-string chatID = "6126141848";  // Chat ID for the Telegram chat
+string botTkn = "8533284428:AAHcJjKUw8IwBeR5PCmzaiGVPcxURNJiP4E";  // Telegram bot token
+string chatID = "2104544252";  // Chat ID for the Telegram chat
 string current_time;
 string message;
 string admin_url = "http://16.171.169.239:3000";
@@ -376,7 +376,7 @@ bool GetModelDecision(double &features[], string &trade_id_out, double &probabil
    string json = "{";
    json += "\"Action\":" + DoubleToString(features[0], 0) + ",";
    json += "\"Hour_of_Day\":" + DoubleToString(features[1], 0) + ",";
-   json += "\"Minutes_of_Hour_of_Day\":" + DoubleToString(features[2], 0) + ",";
+   json += "\"Minutes_of_Hour_of_Day\":" + DoubleToString(features[2], 0);  // ✅ Removed trailing comma
    json += "}";
 
    char post_data[];
@@ -390,12 +390,13 @@ bool GetModelDecision(double &features[], string &trade_id_out, double &probabil
 
    if(res != 200)
      {
-      Print("ML Model request failed. Error code: ", res);
+      Print("❌ ML Model request failed. HTTP code: ", res);
+      Print("Response: ", CharArrayToString(result_data));
       return false;
      }
 
    string response = CharArrayToString(result_data);
-   Print("ML Model response: ", response);
+   Print("✅ ML Model response: ", response);
 
 // Parse JSON response (simple parsing for: {"enter":1,"probability":0.75,"confidence":0.5,"threshold":0.7,"trade_id":"..."})
    int enter_pos = StringFind(response, "\"enter\":");
@@ -404,7 +405,7 @@ bool GetModelDecision(double &features[], string &trade_id_out, double &probabil
 
    if(enter_pos < 0 || prob_pos < 0 || trade_id_pos < 0)
      {
-      Print("Failed to parse model response");
+      Print("❌ Failed to parse model response");
       return false;
      }
 
@@ -427,7 +428,7 @@ bool GetModelDecision(double &features[], string &trade_id_out, double &probabil
    if(trade_id_end > 0)
       trade_id_out = StringSubstr(trade_id_substr, 0, trade_id_end);
 
-   Print("Model decision: enter=", enter_value, ", probability=", probability_out, ", trade_id=", trade_id_out);
+   Print("✅ Model decision: enter=", enter_value, ", probability=", probability_out, ", trade_id=", trade_id_out);
 
    return (enter_value == 1);
   }
@@ -491,7 +492,7 @@ int OnInit()
    ini_bal = AccountInfoDouble(ACCOUNT_BALANCE);
    bal = ini_bal;
    current_time = TimeToString(TimeCurrent(), TIME_DATE | TIME_MINUTES);
-   message = StringFormat("DailyCB Initialized: User: %s (%s), Symbol: %s, Account Balance: %s at %s",
+   message = StringFormat("AI bot Initialized: User: %s (%s), Symbol: %s, Account Balance: %s at %s",
                           license_name, user, _Symbol, IntegerToString(ini_bal), current_time);
    SendTelegramMessage(message);
 // Create ATR handle
@@ -702,6 +703,21 @@ void SendTradeData(string symbol, double lots, string trade_type, double profit,
       Print("Failed to send trade data. Error code: ", res);
      }
   }
+
+//+------------------------------------------------------------------+
+bool is_new_week_open()
+  {
+   MqlDateTime dt;
+   TimeToStruct(TimeCurrent(), dt);
+   int hour_of_day = dt.hour;
+   int day_of_week = dt.day_of_week;
+
+   if(day_of_week == 1 && hour_of_day <= 7)
+      return false;
+   else
+      return true;
+  }
+
 // Tick function
 void OnTick()
   {
@@ -773,7 +789,12 @@ void OnTick()
         }
 
       Print("ML Model approved BUY trade. Probability: ", probability);
-
+      if(!is_new_week_open())
+        {
+         allow_buy_trade = false;
+         allow_sell_trade = false;
+         return;
+        }
       if(m_trade.Buy(LotSize, _Symbol, 0.0, stopLoss, takeProfit, m_comment))
         {
          // Store trade_id for later outcome update
@@ -783,11 +804,15 @@ void OnTick()
 
          allow_buy_trade = false;
          allow_sell_trade = false; // ensure only one trade per day
-         message = StringFormat("DailyCB: ML-Approved Buy Position Opened. Pair: %s, Probability: %.2f%%", _Symbol, probability * 100);
+         message = StringFormat("AI bot Buy Position Opened. Pair: %s", _Symbol);
          SendTelegramMessage(message);
         }
       else
+        {
          Print("Error placing buy order. Code: ", _LastError);
+         allow_buy_trade = false;
+         allow_sell_trade = false;
+        }
      }
 
 // ✅ SELL condition with ML model confirmation
@@ -819,7 +844,12 @@ void OnTick()
         }
 
       Print("ML Model approved SELL trade. Probability: ", probability);
-
+      if(!is_new_week_open())
+        {
+         allow_buy_trade = false;
+         allow_sell_trade = false;
+         return;
+        }
       if(m_trade.Sell(LotSize, _Symbol, 0.0, stopLoss, takeProfit, m_comment))
         {
          // Store trade_id for later outcome update
@@ -829,11 +859,15 @@ void OnTick()
 
          allow_buy_trade = false;
          allow_sell_trade = false; // ensure only one trade per day
-         message = StringFormat("DailyCB: ML-Approved Sell Position Opened. Pair: %s, Probability: %.2f%%", _Symbol, probability * 100);
+         message = StringFormat("AI bot Sell Position Opened. Pair: %s", _Symbol);
          SendTelegramMessage(message);
         }
       else
-         Print("Error placing sell order. Code: ", _LastError);
+        {
+         Print("Error placing buy order. Code: ", _LastError);
+         allow_buy_trade = false;
+         allow_sell_trade = false;
+        }
      }
 
    if(use_breakeven)

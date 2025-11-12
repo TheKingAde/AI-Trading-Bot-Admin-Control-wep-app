@@ -59,8 +59,8 @@ async def post_trade_history():
             profit = float(t.get('profit', 0))
             time_open = t.get('time_open')
             time_close = t.get('time_close')
-            status = t.get('status', 'closed')  # 'open' or 'closed'
-            probability = float(t.get('ai_confidence', 0))
+            status = "closed"  # 'open' or 'closed'
+            probability = 0
 
             # For open trades, check if trade already exists (by license_key, symbol, lots, direction, opened_at)
             # If exists, update it; otherwise insert
